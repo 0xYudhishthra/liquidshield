@@ -1,0 +1,13 @@
+export const POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90" as const;
+export const POSITION_MANAGER = "0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e" as const;
+export const V4_QUOTER = "0xB3d50e12BdC25a1e71cFdC652509EC6bb730bc3f" as const;
+export const STATE_VIEW = "0x7fFE42C4a5DEeA5b0feC41C94C136Cf115597227" as const;
+
+export const CHAINS = { UNICHAIN_SEPOLIA: 1301, ARBITRUM_SEPOLIA: 421614, ETHEREUM_SEPOLIA: 11155111 } as const;
+export const DEFAULT_BASE_FEE = 3000;
+export const DEFENSE_FEE_BPS = 150;
+export const PREMIUM_TO_RESERVE_RATIO = 6000;
+export const DEFAULT_HEALTH_THRESHOLD = 1.3;
+export const WARNING_THRESHOLD = 1.5;
+export const CRITICAL_THRESHOLD = 1.1;
+export const PROTOCOLS = { AAVE_V3: "aave", MORPHO_BLUE: "morpho" } as const;
