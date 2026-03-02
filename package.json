@@ -1,0 +1,28 @@
+{
+  "name": "liquidshield",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cross-chain liquidation defense hook for Uniswap v4 on Unichain",
+  "scripts": {
+    "dev:frontend": "pnpm --filter frontend dev",
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:filler": "pnpm --filter filler dev",
+    "build": "pnpm -r build",
+    "test": "cd packages/contracts && forge test",
+    "test:verbose": "cd packages/contracts && forge test -vvv",
+    "test:coverage": "cd packages/contracts && forge coverage",
+    "deploy:hook": "cd packages/contracts && forge script script/DeployHook.s.sol --broadcast",
+    "deploy:executor": "cd packages/contracts && forge script script/DeployExecutor.s.sol --broadcast"
+  },
+  "keywords": [
+    "uniswap",
+    "v4",
+    "hooks",
+    "liquidation",
+    "defi",
+    "cross-chain",
+    "unichain"
+  ],
+  "author": "Yudhishthra & Team",
+  "license": "MIT"
+}

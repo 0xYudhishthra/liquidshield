@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Next.js
+packages/frontend/.next/
+packages/frontend/out/
+
+# Build
+dist/
+build/
+
+# Coverage
+lcov.info
+coverage/
+
+# Misc
+*.log
