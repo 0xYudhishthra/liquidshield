@@ -155,7 +155,8 @@ describe("getAavePositions — parsing positions", () => {
     expect(position.collateralSymbol).toBe("USDC");
     expect(position.collateralAmount).toBe("5000000000000000000");
     expect(position.debtAmount).toBe("2000000000");
-    expect(position.liquidationThreshold).toBe(0.85);
+    // liquidationThreshold is now normalized (raw value / 10000)
+    expect(position.liquidationThreshold).toBe(parseFloat("0.85") / 10000);
   });
 
   it("uses currentVariableDebt as debtAmount when it is nonzero", async () => {
@@ -167,7 +168,7 @@ describe("getAavePositions — parsing positions", () => {
     expect(result[0].debtAmount).toBe("1500");
   });
 
-  it("uses currentVariableDebt even when it is '0' (truthy string)", async () => {
+  it("sums variable and stable debt for debtAmount", async () => {
     mockRequest.mockResolvedValue({
       userReserves: [
         makeReserve({
@@ -178,9 +179,8 @@ describe("getAavePositions — parsing positions", () => {
     });
 
     const result = await getAavePositions("0xDeaD", 1);
-    // Note: source uses `r.currentVariableDebt || r.currentStableDebt`
-    // "0" is a non-empty string so it is truthy in JS — currentVariableDebt is used
-    expect(result[0].debtAmount).toBe("0");
+    // debtAmount is now the sum of variable + stable debt
+    expect(result[0].debtAmount).toBe("800");
   });
 
   it("falls back to currentStableDebt when currentVariableDebt is empty string", async () => {
@@ -297,14 +297,17 @@ describe("getAavePositions — debt filtering", () => {
 // ---------------------------------------------------------------------------
 // healthFactor — set to 0 in implementation
 // ---------------------------------------------------------------------------
-describe("getAavePositions — healthFactor output", () => {
-  it("sets healthFactor to 0 (stub implementation)", async () => {
+describe("getAavePositions — healthFactor computation", () => {
+  it("computes account-level health factor from reserve data", async () => {
+    // Use realistic Aave subgraph values:
+    // 1 ETH collateral at 1 ETH price, LT = 8250 bps (82.5%), 0.5 ETH debt
+    // HF = (1 * 1 * 0.825) / (0.5 * 1) = 1.65
     mockRequest.mockResolvedValue({
       userReserves: [
         {
           id: "r-1",
-          currentATokenBalance: "1000",
-          currentVariableDebt: "500",
+          currentATokenBalance: "1000000000000000000",       // 1e18 = 1 ETH
+          currentVariableDebt: "500000000000000000",          // 5e17 = 0.5 ETH
           currentStableDebt: "0",
           reserve: {
             symbol: "WETH",
@@ -312,9 +315,9 @@ describe("getAavePositions — healthFactor output", () => {
             underlyingAsset: "0xweth",
             liquidityRate: "0",
             variableBorrowRate: "0",
-            baseLTVasCollateral: "0.75",
-            reserveLiquidationThreshold: "0.82",
-            price: { priceInEth: "1.0" },
+            baseLTVasCollateral: "7500",
+            reserveLiquidationThreshold: "8250",
+            price: { priceInEth: "1000000000000000000" },     // 1e18 = 1 ETH
           },
           usageAsCollateralEnabledOnUser: true,
         },
@@ -322,7 +325,33 @@ describe("getAavePositions — healthFactor output", () => {
     });
 
     const result = await getAavePositions("0xDeaD", 1);
-    // The implementation hardcodes healthFactor: 0
-    expect(result[0].healthFactor).toBe(0);
+    expect(result[0].healthFactor).toBeCloseTo(1.65, 2);
+  });
+
+  it("returns Infinity health factor when there is no debt", async () => {
+    mockRequest.mockResolvedValue({
+      userReserves: [
+        {
+          id: "r-1",
+          currentATokenBalance: "1000000000000000000",
+          currentVariableDebt: "100",   // small debt, but filter passes
+          currentStableDebt: "0",
+          reserve: {
+            symbol: "WETH",
+            decimals: 18,
+            underlyingAsset: "0xweth",
+            liquidityRate: "0",
+            variableBorrowRate: "0",
+            baseLTVasCollateral: "7500",
+            reserveLiquidationThreshold: "8250",
+            price: { priceInEth: "0" },  // zero price => zero debt value
+          },
+          usageAsCollateralEnabledOnUser: true,
+        },
+      ],
+    });
+
+    const result = await getAavePositions("0xDeaD", 1);
+    expect(result[0].healthFactor).toBe(Infinity);
   });
 });

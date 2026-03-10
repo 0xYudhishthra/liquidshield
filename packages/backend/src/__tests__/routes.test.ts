@@ -108,12 +108,14 @@ describe("GET /positions/:address", () => {
 // GET /health/:positionId
 // ---------------------------------------------------------------------------
 describe("GET /health/:positionId", () => {
-  it("returns stub health data with the given positionId", async () => {
+  it("returns fallback health data when hook is unconfigured", async () => {
     const res = await app.request("/health/pos-abc-123");
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.positionId).toBe("pos-abc-123");
-    expect(body.healthFactor).toBe(1.5);
+    expect(body.healthFactor).toBe(0);
+    expect(body.status).toBe("UNKNOWN");
+    expect(body.warning).toBeDefined();
     expect(typeof body.timestamp).toBe("number");
   });
 
@@ -149,7 +151,7 @@ describe("GET /defenses/:address", () => {
 // GET /lp/:address/earnings
 // ---------------------------------------------------------------------------
 describe("GET /lp/:address/earnings", () => {
-  it("returns stub LP earnings data with the given address", async () => {
+  it("returns LP earnings data with the given address", async () => {
     const res = await app.request("/lp/0xDeaD/earnings");
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -159,7 +161,7 @@ describe("GET /lp/:address/earnings", () => {
       premiumYield: "0",
       defenseFeeYield: "0",
       totalYield: "0",
-      apy: "0",
+      apy: 0,
     });
   });
 
