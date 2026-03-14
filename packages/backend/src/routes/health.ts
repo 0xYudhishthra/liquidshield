@@ -150,9 +150,9 @@ healthRoutes.get("/check/:address", async (c) => {
       getMorphoPositions(address, CHAINS.ETHEREUM_SEPOLIA),
     ]);
 
-    const allPositions = [...aaveArbitrum, ...morphoEthereum];
+    const allPositions: any[] = [...aaveArbitrum, ...morphoEthereum];
     const lowestHF = allPositions.length > 0
-      ? Math.min(...allPositions.map((p) => p.healthFactor === Infinity ? 999 : p.healthFactor))
+      ? Math.min(...allPositions.map((p: any) => p.healthFactor === Infinity ? 999 : p.healthFactor))
       : 0;
 
     let overallRisk: "SAFE" | "WARNING" | "CRITICAL" | "LIQUIDATABLE" | "NO_POSITIONS" = "NO_POSITIONS";
@@ -168,12 +168,12 @@ healthRoutes.get("/check/:address", async (c) => {
       totalPositions: allPositions.length,
       lowestHealthFactor: lowestHF,
       overallRisk,
-      positions: allPositions.map((p) => ({
+      positions: allPositions.map((p: any) => ({
         protocol: p.protocol,
         chainId: p.chainId,
         healthFactor: p.healthFactor === Infinity ? 999 : p.healthFactor,
         collateralSymbol: p.collateralSymbol,
-        debtSymbol: "debtSymbol" in p ? p.debtSymbol : p.collateralSymbol,
+        debtSymbol: p.debtSymbol || p.collateralSymbol,
       })),
       timestamp: Date.now(),
     });

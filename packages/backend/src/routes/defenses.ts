@@ -85,7 +85,7 @@ async function fetchOnChainDefenseEvents(): Promise<DefenseEvent[]> {
       });
 
       for (const log of settledLogs) {
-        const args = log.args as any;
+        const args = (log as any).args;
         if (args.positionId) {
           settledMap.set(args.positionId.toLowerCase(), {
             defenseAmount: args.defenseAmount || 0n,
@@ -97,7 +97,7 @@ async function fetchOnChainDefenseEvents(): Promise<DefenseEvent[]> {
 
     const events: DefenseEvent[] = [];
     for (const log of logs) {
-      const args = log.args as any;
+      const args = (log as any).args;
       const positionId: string = args.positionId || "0x";
       const strategy = Number(args.strategy || 0);
       const amount = args.amount || 0n;

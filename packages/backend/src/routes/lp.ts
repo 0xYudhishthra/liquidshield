@@ -104,9 +104,9 @@ async function getHistoricalDonations(): Promise<{ totalDonated0: bigint; totalD
     });
 
     for (const log of logs) {
-      const args = log.args as any;
-      totalDonated0 += args.amount0 || 0n;
-      totalDonated1 += args.amount1 || 0n;
+      const args = (log as any).args;
+      totalDonated0 += args?.amount0 || 0n;
+      totalDonated1 += args?.amount1 || 0n;
     }
   } catch (error) {
     console.error("Error fetching PremiumsDonated events:", error);
@@ -144,8 +144,8 @@ async function getHistoricalDefenseFees(): Promise<bigint> {
     });
 
     for (const log of logs) {
-      const args = log.args as any;
-      totalFees += args.feeCharged || 0n;
+      const args = (log as any).args;
+      totalFees += args?.feeCharged || 0n;
     }
   } catch (error) {
     console.error("Error fetching DefenseSettled events:", error);
