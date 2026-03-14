@@ -6,7 +6,7 @@ import { ProtocolLogo } from "@/components/shared/ProtocolLogo";
 import { ChainBadge } from "@/components/shared/ChainBadge";
 import { HealthFactorBadge } from "@/components/shared/HealthFactorBadge";
 import { RegisterModal } from "./RegisterModal";
-import type { Position } from "../../../../shared/src/types";
+import type { Position } from "@shared/src/types";
 
 export function UnprotectedPositions({ address }: { address: string }) {
   const { data, isLoading, error } = usePositions(address);

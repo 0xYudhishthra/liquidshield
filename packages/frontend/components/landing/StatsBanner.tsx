@@ -7,8 +7,9 @@ export function StatsBanner() {
   const { data: reserves } = useReserveBalances();
   const { data: premiums } = useAccumulatedPremiums();
 
-  const reserve0 = reserves ? formatUnits(reserves[0] as bigint, 18) : "0";
-  const reserve1 = reserves ? formatUnits(reserves[1] as bigint, 6) : "0";
+  const reserveArr = reserves as [bigint, bigint] | undefined;
+  const reserve0 = reserveArr ? formatUnits(reserveArr[0], 18) : "0";
+  const reserve1 = reserveArr ? formatUnits(reserveArr[1], 6) : "0";
   const totalPremiums = premiums ? formatUnits(premiums as bigint, 6) : "0";
 
   const stats = [

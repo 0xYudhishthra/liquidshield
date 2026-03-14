@@ -47,7 +47,7 @@ vi.mock("@/lib/contracts", () => ({
 }));
 
 import { RegisterModal } from "@/components/dashboard/RegisterModal";
-import type { Position } from "../../../../shared/src/types";
+import type { Position } from "@shared/src/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

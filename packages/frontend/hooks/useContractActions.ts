@@ -2,7 +2,7 @@
 
 import { useWriteContract, useWaitForTransactionReceipt } from "wagmi";
 import { CONTRACTS, ROUTER_ABI } from "@/lib/contracts";
-import type { DefenseStrategy } from "../../../shared/src/types";
+import type { DefenseStrategy } from "@shared/src/types";
 
 const strategyToUint8 = (s: DefenseStrategy): number =>
   s === "COLLATERAL_TOPUP" ? 0 : 1;

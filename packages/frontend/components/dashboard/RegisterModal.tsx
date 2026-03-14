@@ -5,7 +5,7 @@ import { useAccount } from "wagmi";
 import { parseUnits, keccak256, encodePacked } from "viem";
 import { useRegisterPosition } from "@/hooks/useContractActions";
 import { useTokenApproval } from "@/hooks/useTokenApproval";
-import type { Position } from "../../../../shared/src/types";
+import type { Position } from "@shared/src/types";
 
 interface Props {
   isOpen: boolean;

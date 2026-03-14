@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { Position } from "../../../../shared/src/types";
+import type { Position } from "@shared/src/types";
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 

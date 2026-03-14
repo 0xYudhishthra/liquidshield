@@ -2,7 +2,7 @@
 
 import { usePositions } from "@/hooks/usePositions";
 import { useDefenseHistory } from "@/hooks/useDefenseHistory";
-import type { ProtectedPosition, DefenseEvent } from "../../../../shared/src/types";
+import type { ProtectedPosition, DefenseEvent } from "@shared/src/types";
 
 export function ProtectionStats({ address }: { address: string }) {
   const { data: posData } = usePositions(address);

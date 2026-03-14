@@ -1,7 +1,7 @@
 "use client";
 
 import { useDefenseHistory } from "@/hooks/useDefenseHistory";
-import type { DefenseEvent } from "../../../../shared/src/types";
+import type { DefenseEvent } from "@shared/src/types";
 
 const EXPLORER_URL = "https://sepolia.uniscan.xyz";
 

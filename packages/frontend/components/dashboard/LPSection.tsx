@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchLPEarnings } from "@/lib/api";
-import type { LPEarnings } from "../../../../shared/src/types";
+import type { LPEarnings } from "@shared/src/types";
 
 export function LPSection({ address }: { address: string }) {
   const [isExpanded, setIsExpanded] = useState(false);

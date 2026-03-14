@@ -1,6 +1,6 @@
-import HookABI from "../../../shared/src/abis/LiquidShieldHook.json";
-import RouterABI from "../../../shared/src/abis/LiquidShieldRouter.json";
-import SettlerABI from "../../../shared/src/abis/LiquidShieldSettler.json";
+import HookABI from "@shared/src/abis/LiquidShieldHook.json";
+import RouterABI from "@shared/src/abis/LiquidShieldRouter.json";
+import SettlerABI from "@shared/src/abis/LiquidShieldSettler.json";
 
 export const CONTRACTS = {
   hook: {

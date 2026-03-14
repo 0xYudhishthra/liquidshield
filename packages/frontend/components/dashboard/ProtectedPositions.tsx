@@ -5,7 +5,7 @@ import { useUnregisterPosition, useTopUpPremium } from "@/hooks/useContractActio
 import { ProtocolLogo } from "@/components/shared/ProtocolLogo";
 import { ChainBadge } from "@/components/shared/ChainBadge";
 import { HealthFactorBadge } from "@/components/shared/HealthFactorBadge";
-import type { ProtectedPosition } from "../../../../shared/src/types";
+import type { ProtectedPosition } from "@shared/src/types";
 
 export function ProtectedPositions({ address }: { address: string }) {
   const { data, isLoading } = usePositions(address);
