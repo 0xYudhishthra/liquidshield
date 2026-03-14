@@ -33,47 +33,48 @@ No automated, non-custodial defense layer exists that works across chains.
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           UNICHAIN (v4 + Flashblocks)                  │
-│                                                                         │
-│  ┌─────────────────────┐     ┌──────────────────────────────────────┐  │
-│  │  USDC/WETH Pool      │     │  LiquidShieldHook.sol                │  │
-│  │  (Standard v4 Pool)  │◄───►│  • ERC-6909 Defense Reserve          │  │
-│  │  • Swap fees for LPs │     │  • registerPosition()                │  │
-│  │  • Premium donations │     │  • triggerDefense() → burn/take      │  │
-│  │    via donate()      │     │  • settleDefense() → replenish       │  │
-│  └─────────────────────┘     │  • donatePremiumsToLPs()             │  │
-│                               │  • beforeSwap() → dynamic fees       │  │
-│  ┌──────────────────────┐    └───────┬───────────────┬──────────────┘  │
-│  │ LiquidShieldRouter   │            │               │                  │
-│  │ (User Registration)  │    ERC-7683 Intent    Settlement              │
-│  └──────────────────────┘            │               │                  │
-│  ┌──────────────────────┐            │               │                  │
-│  │ LiquidShieldSettler  │────────────┘               │                  │
-│  │ (IOriginSettler)     │                            │                  │
-│  └──────────────────────┘                            │                  │
-└──────────────────────────────────────┬───────────────┴──────────────────┘
-                                       │
-                            ┌──────────▼──────────┐
-                            │  Reactive Network   │
-                            │  PositionMonitor    │
-                            │  (RSC)              │
-                            │  • Subscribe to     │
-                            │    lending events   │
-                            │  • Monitor HF       │
-                            │  • Trigger callback │
-                            └──────────┬──────────┘
-                                       │
-                      ┌────────────────┼────────────────┐
-                      ▼                ▼                ▼
-             ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
-             │ Arbitrum      │ │ Ethereum     │ │ Filler Service   │
-             │ Aave V3       │ │ Morpho Blue  │ │ • Watch intents  │
-             │ AaveV3Adapter │ │ MorphoAdapter│ │ • Fill on source │
-             │ (collateral   │ │ (batched     │ │ • Settle back    │
-             │  top-up)      │ │  unwind)     │ │   on Unichain    │
-             └──────────────┘ └──────────────┘ └──────────────────┘
+```mermaid
+graph TB
+    subgraph UNICHAIN["UNICHAIN (v4 + Flashblocks)"]
+        Pool["USDC/WETH Pool<br/>Swap fees for LPs<br/>Premium donations via donate()"]
+        Hook["LiquidShieldHook.sol<br/>ERC-6909 Defense Reserve<br/>triggerDefense() → burn/take<br/>settleDefense() → replenish<br/>beforeSwap() → dynamic fees"]
+        Router["LiquidShieldRouter<br/>User Registration & Premiums"]
+        Settler["LiquidShieldSettler<br/>IOriginSettler (ERC-7683)"]
+        Pool <--> Hook
+        Router --> Hook
+        Hook --> Settler
+    end
+
+    subgraph REACTIVE["REACTIVE NETWORK"]
+        RSC["PositionMonitor.sol (RSC)<br/>Subscribe to lending events<br/>Monitor health factors<br/>Trigger cross-chain callback"]
+    end
+
+    subgraph ARB["ARBITRUM SEPOLIA"]
+        Executor1["DefenseExecutor"]
+        Aave["AaveV3Adapter<br/>Collateral Top-Up"]
+        Executor1 --> Aave
+    end
+
+    subgraph ETH["ETHEREUM SEPOLIA"]
+        Executor2["DefenseExecutor"]
+        Morpho["MorphoBlueAdapter<br/>Batched Gradual Unwind"]
+        Executor2 --> Morpho
+    end
+
+    subgraph FILLER["FILLER SERVICE"]
+        Watcher["Watch intents"]
+        Fill["Fill on source chain"]
+        Settle["Settle back on Unichain"]
+        Watcher --> Fill --> Settle
+    end
+
+    RSC -- "native callback" --> Hook
+    RSC -. "subscribes to events" .-> Aave
+    RSC -. "subscribes to events" .-> Morpho
+    Settler -- "ERC-7683 intent" --> Watcher
+    Settle -- "settlement" --> Hook
+    Fill --> Executor1
+    Fill --> Executor2
 ```
 
 ---
