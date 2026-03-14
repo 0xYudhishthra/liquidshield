@@ -1,209 +1,411 @@
 # LiquidShield — Cross-Chain Liquidation Defense Hook
 
-> **Never get liquidated again.**
+> **Uniswap v4 Hook | Unichain | Reactive Network**
+> **UHI8 Hookathon | March 2026**
 
-LiquidShield is a cross-chain liquidation defense hook for Uniswap v4 deployed on Unichain. DeFi borrowers lose billions annually to liquidation penalties (5-15%) during market downturns. LiquidShield monitors lending positions across Arbitrum, Base, Optimism, and Ethereum via Reactive Network's RSCs, and executes preemptive defense strategies through a Uniswap v4 pool before liquidation occurs.
+> [!IMPORTANT]
+> **[Watch the Demo Video](LOOM_LINK_HERE)** (under 5 minutes)
 
-**Hackathon:** UHI8 Hookathon | February-March 2026
+**Never get liquidated again.** LiquidShield is a Uniswap v4 hook that monitors DeFi lending positions across chains and executes preemptive defense strategies before liquidation occurs — turning Uniswap LPs into decentralized insurance providers.
+
+---
+
+## Key Features
+
+- **Cross-Chain Defense**: Monitors positions on Aave (Arbitrum) and Morpho (Ethereum) from Unichain
+- **v4-Native Architecture**: ERC-6909 defense reserve with atomic burn/take/donate — every delta resolves to zero
+- **Dual Adapter Pattern**: `AaveV3Adapter` (collateral top-up) + `MorphoBlueAdapter` (batched gradual unwind) — proving protocol-agnostic extensibility
+- **Sub-Second Reaction**: Flashblocks (200ms preconfirmation) + TEE priority ordering = ~400ms detection-to-defense
+- **Non-Custodial**: Approval-based delegation lets the executor act on behalf of user's EOA without custody (EIP-7702 production target)
+- **Novel LP Yield**: "Liquidation insurance yield" = swap fees + protection premiums + defense execution fees
 
 ---
 
 ## The Problem
 
-- Over $2B in DeFi positions were liquidated in 2024 alone
-- Users lose 5-15% in penalties to liquidation bots and MEV searchers
-- Current solutions are manual: watch your health factor, set price alerts, scramble to add collateral
-- No automated, non-custodial defense layer exists that works across chains
+Over **$2B** in DeFi positions were liquidated in 2024. Users lost 5-15% in penalties to liquidation bots and MEV searchers. Current solutions are manual — watch your health factor, set price alerts, scramble to add collateral.
+
+No automated, non-custodial defense layer exists that works across chains.
+
+**LiquidShield changes this.** By embedding liquidation defense directly into a Uniswap v4 hook, we turn passive LP liquidity into active insurance infrastructure.
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           UNICHAIN (v4 + Flashblocks)                  │
+│                                                                         │
+│  ┌─────────────────────┐     ┌──────────────────────────────────────┐  │
+│  │  USDC/WETH Pool      │     │  LiquidShieldHook.sol                │  │
+│  │  (Standard v4 Pool)  │◄───►│  • ERC-6909 Defense Reserve          │  │
+│  │  • Swap fees for LPs │     │  • registerPosition()                │  │
+│  │  • Premium donations │     │  • triggerDefense() → burn/take      │  │
+│  │    via donate()      │     │  • settleDefense() → replenish       │  │
+│  └─────────────────────┘     │  • donatePremiumsToLPs()             │  │
+│                               │  • beforeSwap() → dynamic fees       │  │
+│  ┌──────────────────────┐    └───────┬───────────────┬──────────────┘  │
+│  │ LiquidShieldRouter   │            │               │                  │
+│  │ (User Registration)  │    ERC-7683 Intent    Settlement              │
+│  └──────────────────────┘            │               │                  │
+│  ┌──────────────────────┐            │               │                  │
+│  │ LiquidShieldSettler  │────────────┘               │                  │
+│  │ (IOriginSettler)     │                            │                  │
+│  └──────────────────────┘                            │                  │
+└──────────────────────────────────────┬───────────────┴──────────────────┘
+                                       │
+                            ┌──────────▼──────────┐
+                            │  Reactive Network   │
+                            │  PositionMonitor    │
+                            │  (RSC)              │
+                            │  • Subscribe to     │
+                            │    lending events   │
+                            │  • Monitor HF       │
+                            │  • Trigger callback │
+                            └──────────┬──────────┘
+                                       │
+                      ┌────────────────┼────────────────┐
+                      ▼                ▼                ▼
+             ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐
+             │ Arbitrum      │ │ Ethereum     │ │ Filler Service   │
+             │ Aave V3       │ │ Morpho Blue  │ │ • Watch intents  │
+             │ AaveV3Adapter │ │ MorphoAdapter│ │ • Fill on source │
+             │ (collateral   │ │ (batched     │ │ • Settle back    │
+             │  top-up)      │ │  unwind)     │ │   on Unichain    │
+             └──────────────┘ └──────────────┘ └──────────────────┘
+```
+
+---
+
+## Package Structure
+
+| Package | Purpose | Technology |
+|---|---|---|
+| [`packages/contracts`](./packages/contracts/) | Core hook, router, settler, adapters, RSC, executor | Solidity, Foundry, Uniswap v4 |
+| [`packages/filler`](./packages/filler/) | Intent watching + cross-chain execution + settlement | TypeScript, Viem, ERC-7683 |
+| [`packages/frontend`](./packages/frontend/) | Dashboard + landing page | Next.js 14, wagmi v2, TailwindCSS |
+| [`packages/backend`](./packages/backend/) | Position aggregation, health monitoring, defense history | Hono, TypeScript, GraphQL |
+| [`packages/shared`](./packages/shared/) | Types, constants, ABIs shared across packages | TypeScript |
+
+---
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. User registers lending position (Aave/Morpho) with hook    │
-│  2. Reactive Network RSC monitors health factor across chains  │
-│  3. When health drops below threshold:                         │
-│     → RSC triggers hook on Unichain                            │
-│     → Hook burns ERC-6909 claims, extracts defense capital     │
-│     → Hook emits ERC-7683 cross-chain intent                   │
-│     → Filler delivers collateral to lending position           │
-│     → Position health restored. User saved.                    │
-│  4. LPs earn triple yield: swap fees + premiums + defense fees │
-└─────────────────────────────────────────────────────────────────┘
-```
+### Phase 1: Pool Setup & LP Deposit
 
-### Defense Strategies
+LPs deposit USDC and WETH into a standard Uniswap v4 pool on Unichain with the LiquidShield hook attached. They earn triple yield: swap fees + protection premiums + defense execution fees.
 
-| Strategy | Use Case | Mechanic |
-|---|---|---|
-| **Collateral Top-Up** | Moderate health decline (1.5x → 1.25x) | Hook extracts WETH/USDC from reserve, sends to lending position via cross-chain intent |
-| **Batched Gradual Unwind** | Severe health decline approaching 1.0x | Hook emits N sequential ERC-7683 intents, progressively unwinding the position with minimal price impact |
+### Phase 2: Position Registration
 
-## Architecture
+Users register their lending positions (Aave or Morpho) by calling `registerAndPayPremium()` on the router. They pre-approve the DefenseExecutor to act on their behalf on the source chain. An upfront premium (paid in USDC) covers N months of protection.
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        UNICHAIN SEPOLIA                              │
-│                                                                      │
-│  ┌─────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │
-│  │ LiquidShieldHook│──│LiquidShieldRouter│  │LiquidShieldSettler │  │
-│  │ (Core v4 Hook)  │  │ (User Interface) │  │  (ERC-7683)        │  │
-│  └────────┬────────┘  └──────────────────┘  └────────┬───────────┘  │
-│           │                                           │              │
-│  ┌────────┴────────┐                                  │              │
-│  │  PoolManager    │     USDC/WETH Pool               │              │
-│  │  (ERC-6909      │     + Defense Reserve             │              │
-│  │   Claims)       │                                  │              │
-│  └─────────────────┘                                  │              │
-└───────────────────────────────────────────────────────┼──────────────┘
-                                                        │
-        ┌───────────────────────┐                       │
-        │   REACTIVE NETWORK    │                       │
-        │  PositionMonitor.sol  │──── native callback ──┘
-        │  (RSC: monitors HFs)  │
-        └───────────┬───────────┘
-                    │ subscribes to events
-        ┌───────────┴──────────────────────────────────────┐
-        │                                                  │
-┌───────┴──────────┐                          ┌────────────┴──────────┐
-│ ARBITRUM SEPOLIA │                          │  ETHEREUM SEPOLIA     │
-│                  │                          │                       │
-│ DefenseExecutor  │                          │  DefenseExecutor      │
-│ AaveV3Adapter    │                          │  MorphoBlueAdapter    │
-│ Aave V3 Pool     │                          │  Morpho Blue          │
-└──────────────────┘                          └───────────────────────┘
-```
+### Phase 3: Cross-Chain Monitoring
 
-## Core Contracts
+Reactive Smart Contracts (RSCs) on Reactive Network subscribe to lending protocol events across Arbitrum and Ethereum. When a health factor drops below the user's configured threshold, the RSC triggers a callback to the hook on Unichain.
 
-| Contract | Chain | Purpose |
-|---|---|---|
-| `LiquidShieldHook.sol` | Unichain Sepolia | Core v4 hook. ERC-6909 defense reserve, `triggerDefense()`, dynamic fees, premium collection |
-| `LiquidShieldRouter.sol` | Unichain Sepolia | User-facing: registration, premium payments, position management |
-| `LiquidShieldSettler.sol` | Unichain Sepolia | ERC-7683 `IOriginSettler` implementation for cross-chain intent emission |
-| `PositionMonitor.sol` | Reactive Network (Kopli) | RSC: cross-chain health factor monitoring with native callbacks |
-| `DefenseExecutor.sol` | Arbitrum + Ethereum Sepolia | Executes defense on source chains via lending adapter routing |
-| `AaveV3Adapter.sol` | Arbitrum Sepolia | Aave V3 implementation of `ILendingAdapter` |
-| `MorphoBlueAdapter.sol` | Ethereum Sepolia | Morpho Blue implementation of `ILendingAdapter` |
+### Phase 4: Defense Execution
 
-## V4 Hook Innovation
+1. RSC callback hits `triggerDefense()` on the hook
+2. Hook calls `poolManager.unlock()` — enters flash accounting context
+3. Inside callback: `burn()` ERC-6909 claims (+delta) → `take()` tokens (-delta) → **deltas = 0** ✓
+4. Hook calls Settler to emit `ERC-7683 GaslessCrossChainOrder` with extracted defense capital
+5. Filler picks up intent, fills on source chain via `DefenseExecutor`
+6. Lending adapter executes strategy (collateral top-up or batched gradual unwind)
+7. Filler settles back on Unichain → hook reserve replenished, 1.5% fee charged
 
-The hook manages a **defense reserve via v4's ERC-6909 accounting system**, funded by user premiums. When defense triggers, the hook atomically burns ERC-6909 claims + extracts tokens within a single `unlock` callback (all deltas resolve to zero). LPs earn premium yield via `poolManager.donate()`.
+### Phase 5: LP Rewards
 
-**Hook permissions:**
-- `afterAddLiquidity` — Track LPs for premium distribution
-- `afterRemoveLiquidity` — Update LP tracking
-- `beforeSwap` — Defense-aware dynamic fees (higher fees when reserve utilization is high)
+Hook periodically calls `poolManager.donate()` to distribute accumulated premiums and defense fees to in-range LPs — v4's native mechanism for LP reward distribution.
 
-**LP Triple Yield:**
-1. Swap fees (standard AMM)
-2. Premium donations (via `donate()` from user premiums)
-3. Defense fee donations (via `donate()` after successful defense, 1.5% of defense amount)
+---
+
+## Defense Strategies
+
+| Strategy | Adapter | When Used | How It Works |
+|---|---|---|---|
+| **Collateral Top-Up** | `AaveV3Adapter` | Health factor approaching threshold | Hook extracts WETH from defense reserve → filler deposits as additional collateral on Aave → health factor recovers |
+| **Batched Gradual Unwind** | `MorphoBlueAdapter` | Position in critical danger | Hook emits N sequential ERC-7683 intents, each for a fractional portion → filler executes each batch on source chain → position gracefully unwound without cascade liquidation |
+
+---
 
 ## Partner Integrations
 
-### Reactive Network
-- **`packages/contracts/src/rsc/PositionMonitor.sol`** — Reactive Smart Contract for cross-chain health factor monitoring
-- Subscribes to Aave V3 and Morpho Blue lending protocol events across Arbitrum and Ethereum
-- Native callback mechanism triggers `triggerDefense()` on the hook when health drops below threshold
+> This section maps each partner technology to the exact files where it's integrated.
+
+### Uniswap v4 Hooks
+
+Core hook leveraging v4's flash accounting, ERC-6909 claims, and `donate()` for LP distribution.
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Main hook contract — `getHookPermissions()`, `beforeSwap()`, `afterAddLiquidity()`, `afterRemoveLiquidity()`, defense trigger, ERC-6909 accounting |
+| [`packages/contracts/src/router/LiquidShieldRouter.sol`](./packages/contracts/src/router/LiquidShieldRouter.sol) | User-facing registration and premium payments via the hook |
+| [`packages/contracts/src/interfaces/ILiquidShieldHook.sol`](./packages/contracts/src/interfaces/ILiquidShieldHook.sol) | Hook interface definition |
+| [`packages/contracts/test/LiquidShieldHook.t.sol`](./packages/contracts/test/LiquidShieldHook.t.sol) | 50 Foundry tests: registration, premium collection, defense trigger, ERC-6909 accounting, donate(), dynamic fees |
+| [`packages/contracts/test/integration/FullDefenseFlow.t.sol`](./packages/contracts/test/integration/FullDefenseFlow.t.sol) | End-to-end integration: register → trigger → defend → settle → donate |
 
 ### Unichain (Flashblocks + TEE)
-- **`packages/contracts/src/hooks/LiquidShieldHook.sol`** — Core hook leveraging Unichain's 200ms Flashblocks for sub-second defense response
-- TEE-based block building prevents MEV front-running of defense transactions
-- Detection-to-defense-confirmation: ~400ms (vs 12-24s on Ethereum L1)
+
+LiquidShield leverages Unichain's 200ms Flashblock preconfirmations for sub-second defense reaction time, and TEE-based priority ordering to prevent MEV front-running of defense transactions.
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Hook deployed on Unichain Sepolia — all defense accounting benefits from ~400ms state propagation via Flashblocks |
+| [`packages/contracts/src/settler/LiquidShieldSettler.sol`](./packages/contracts/src/settler/LiquidShieldSettler.sol) | ERC-7683 settlement on Unichain — intent emission + filler settlement verification |
+| [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Monitors Flashblock-preconfirmed defense events for rapid filler response |
+| [`packages/filler/src/settlement.ts`](./packages/filler/src/settlement.ts) | Settlement back on Unichain after source-chain defense execution |
+
+### Reactive Network
+
+Cross-chain health factor monitoring via Reactive Smart Contracts — the canonical RSC use case.
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC deployed on Reactive Network (Kopli testnet) — subscribes to lending protocol events, monitors health factors, triggers cross-chain callbacks to the hook |
+| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 19 Foundry tests: subscription, monitoring, callback triggering, multi-position support |
 
 ### ERC-7683 (Cross-Chain Intents)
-- **`packages/contracts/src/settler/LiquidShieldSettler.sol`** — Full `IOriginSettler` implementation
-- **`packages/filler/src/`** — Intent watcher, source-chain executor, Unichain settlement
 
-### Lending Protocol Adapters
-- **`packages/contracts/src/adapters/ILendingAdapter.sol`** — Protocol-agnostic interface
-- **`packages/contracts/src/adapters/AaveV3Adapter.sol`** — Aave V3 (collateral top-up defense)
-- **`packages/contracts/src/adapters/MorphoBlueAdapter.sol`** — Morpho Blue (batched gradual unwind)
+| File | Description |
+|---|---|
+| [`packages/contracts/src/settler/LiquidShieldSettler.sol`](./packages/contracts/src/settler/LiquidShieldSettler.sol) | `IOriginSettler` implementation — `open()` emits `GaslessCrossChainOrder`, `settle()` verifies filler execution |
+| [`packages/contracts/test/LiquidShieldSettler.t.sol`](./packages/contracts/test/LiquidShieldSettler.t.sol) | 16 tests: order creation, nonce tracking, settlement, authorization |
+| [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Intent watcher — monitors `OrderOpened` events, decodes intent data |
+| [`packages/filler/src/executor.ts`](./packages/filler/src/executor.ts) | Filler executor — dispatches to strategy, fills on source chain |
 
-## Getting Started
+### Defense Executor & Lending Adapters
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/executor/DefenseExecutor.sol`](./packages/contracts/src/executor/DefenseExecutor.sol) | Source-chain executor — routes to correct `ILendingAdapter`, executes defense via user's pre-approval |
+| [`packages/contracts/src/interfaces/ILendingAdapter.sol`](./packages/contracts/src/interfaces/ILendingAdapter.sol) | Protocol-agnostic interface — `getHealthFactor()`, `depositCollateral()`, `repayDebt()`, `getPositionData()` |
+| [`packages/contracts/src/adapters/AaveV3Adapter.sol`](./packages/contracts/src/adapters/AaveV3Adapter.sol) | Aave V3 adapter — collateral top-up via `pool.supply()`, health factor via `getUserAccountData()` |
+| [`packages/contracts/src/adapters/MorphoBlueAdapter.sol`](./packages/contracts/src/adapters/MorphoBlueAdapter.sol) | Morpho Blue adapter — computed HF from position data + oracle + LLTV, `supplyCollateral()` for defense |
+| [`packages/contracts/test/adapters/`](./packages/contracts/test/adapters/) | Per-adapter test suites (9 Aave tests, 8 Morpho tests including fuzz) |
+
+---
+
+## Supported Networks
+
+| Network | Chain ID | Role |
+|---|---|---|
+| **Unichain Sepolia** | 1301 | Hook deployment, pool, settlement |
+| **Arbitrum Sepolia** | 421614 | Aave V3 positions (source chain) |
+| **Ethereum Sepolia** | 11155111 | Morpho Blue positions (source chain) |
+| **Reactive Kopli** | — | RSC deployment for cross-chain monitoring |
+
+---
+
+## Deployed Contracts
+
+> Testnet deployments for the hookathon demo.
+
+| Contract | Network | Address |
+|---|---|---|
+| `LiquidShieldHook` | Unichain Sepolia | `0x...` |
+| `LiquidShieldRouter` | Unichain Sepolia | `0x...` |
+| `LiquidShieldSettler` | Unichain Sepolia | `0x...` |
+| `DefenseExecutor` | Arbitrum Sepolia | `0x...` |
+| `DefenseExecutor` | Ethereum Sepolia | `0x...` |
+| `AaveV3Adapter` | Arbitrum Sepolia | `0x...` |
+| `MorphoBlueAdapter` | Ethereum Sepolia | `0x...` |
+| `PositionMonitor` (RSC) | Reactive Kopli | `0x...` |
+
+*Deployment pending — addresses will be filled after testnet deployment.*
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) (Solidity toolchain)
-- [Node.js](https://nodejs.org/) >= 18
-- [pnpm](https://pnpm.io/) >= 8
+- [Foundry](https://book.getfoundry.sh/) (for contracts)
+- Node.js 18+ and pnpm 8+
+- Access to testnet faucets ([Unichain](https://faucet.unichain.org/), [Alchemy Sepolia](https://sepoliafaucet.com/))
 
 ### Installation
 
 ```bash
 git clone https://github.com/0xYudhishthra/liquidshield.git
 cd liquidshield
+
+# Install contract dependencies
+cd packages/contracts
+forge install
+
+# Install JS dependencies
+cd ../..
 pnpm install
 ```
 
-### Build & Test
+### Run Tests
 
 ```bash
-# Smart contracts
+# Contract tests (126 tests)
 cd packages/contracts
-forge build
 forge test -vvv
 
-# Frontend
-pnpm --filter frontend dev
+# Specific adapter tests
+forge test --match-contract AaveV3AdapterTest -vvv
+forge test --match-contract MorphoBlueAdapterTest -vvv
 
-# Backend
-pnpm --filter backend dev
+# Backend tests (285 tests)
+cd ../backend && pnpm test
 
-# Filler service
-pnpm --filter filler dev
+# Frontend tests (129 tests)
+cd ../frontend && pnpm test
+
+# Filler tests (23 tests)
+cd ../filler && pnpm test
 ```
 
-### Deploy
+### Local Development
 
 ```bash
-# Deploy hook to Unichain Sepolia
-cd packages/contracts
-forge script script/DeployHook.s.sol --broadcast --rpc-url unichain-sepolia
+# Start backend API
+cd packages/backend && pnpm dev
 
-# Deploy executor + adapters to source chains
-forge script script/DeployExecutor.s.sol --broadcast --rpc-url arbitrum-sepolia
-forge script script/DeployExecutor.s.sol --broadcast --rpc-url ethereum-sepolia
+# Start frontend
+cd packages/frontend && pnpm dev
+
+# Start filler service
+cd packages/filler && pnpm dev
 ```
+
+### Environment Configuration
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+# RPC Endpoints
+UNICHAIN_SEPOLIA_RPC_URL=https://sepolia.unichain.org
+ARBITRUM_SEPOLIA_RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
+ETHEREUM_SEPOLIA_RPC_URL=https://rpc.sepolia.org
+REACTIVE_KOPLI_RPC_URL=https://kopli-rpc.reactive.network
+
+# Deployer
+PRIVATE_KEY=0x...
+
+# Frontend
+NEXT_PUBLIC_HOOK_ADDRESS=
+NEXT_PUBLIC_ROUTER_ADDRESS=
+NEXT_PUBLIC_SETTLER_ADDRESS=
+NEXT_PUBLIC_API_URL=http://localhost:3001
+
+# Filler
+FILLER_PRIVATE_KEY=0x...
+```
+
+---
 
 ## Testing
 
 ```bash
 cd packages/contracts
 
-# Unit tests
-forge test --match-path "test/*.t.sol" -vvv
+# Full suite
+forge test
 
-# Integration tests (full defense flow)
-forge test --match-path "test/integration/*.t.sol" -vvv
+# With gas reporting
+forge test --gas-report
 
-# Coverage
-forge coverage
+# Specific test files
+forge test --match-contract LiquidShieldHookTest     # Core hook (50 tests)
+forge test --match-contract PositionMonitorTest       # RSC monitoring (19 tests)
+forge test --match-contract LiquidShieldSettlerTest   # ERC-7683 settlement (16 tests)
+forge test --match-contract DefenseExecutorTest       # Source-chain executor (10 tests)
+forge test --match-contract AaveV3AdapterTest         # Aave adapter (9 tests)
+forge test --match-contract MorphoBlueAdapterTest     # Morpho adapter (8 tests)
+forge test --match-contract LiquidShieldRouterTest    # Router (7 tests)
+forge test --match-contract FullDefenseFlowTest       # End-to-end integration (7 tests)
 ```
+
+### Test Coverage
+
+| Test Suite | Tests | Description |
+|---|---|---|
+| `LiquidShieldHook.t.sol` | 50 | Registration, premium collection, defense trigger, ERC-6909 accounting, donate(), dynamic fees, fuzz testing |
+| `PositionMonitor.t.sol` | 19 | RSC subscription, monitoring, callback triggering, multi-position, fuzz testing |
+| `LiquidShieldSettler.t.sol` | 16 | Order creation, nonce tracking, settlement verification, authorization, fuzz testing |
+| `DefenseExecutor.t.sol` | 10 | Strategy dispatch, adapter routing, access control, fuzz testing |
+| `AaveV3Adapter.t.sol` | 9 | Health factor reads, collateral deposit, debt repay, fuzz testing |
+| `MorphoBlueAdapter.t.sol` | 8 | HF computation from position data + oracle + LLTV, collateral operations |
+| `LiquidShieldRouter.t.sol` | 7 | User registration, premium payments, unregistration |
+| `FullDefenseFlow.t.sol` | 7 | Full lifecycle: register → trigger → defend → settle → donate → unregister |
+| **Total Solidity** | **126** | |
+| Backend tests | 285 | API routes, position aggregation, defense store, webhooks |
+| Frontend tests | 129 | Component tests, hook tests, utility tests |
+| Filler tests | 23 | Watcher, executor, strategy tests |
+| **Total** | **563** | |
+
+---
 
 ## Demo Video
 
-[Link to demo video — under 5 minutes]
+**[Watch on Loom](LOOM_LINK_HERE)** — under 5 minutes
 
-### Demo Flow
-1. **Scene A (Aave V3):** WETH-collateralized position on Arbitrum Sepolia → health drops → collateral top-up defense → health restored
-2. **Scene B (Morpho Blue):** USDC-collateralized position on Ethereum Sepolia → severe health drop → batched gradual unwind → position safely unwound
+The demo shows:
+1. **Aave Defense** (Arbitrum): Register position → simulate price drop → collateral top-up → health factor recovered
+2. **Morpho Defense** (Ethereum): Register position → simulate severe drop → batched gradual unwind → position gracefully unwound
+3. **Architecture walkthrough**: v4 hook + RSC + ERC-7683 + adapter pattern
 
-**One hook. One pool. Two protocols. Two strategies. Two chains. Every delta resolves to zero.**
+> One USDC/WETH pool. Two lending protocols. Two defense strategies. Two chains. Every delta resolves to zero.
 
-## Why Unichain?
+---
 
-| Capability | LiquidShield Usage |
-|---|---|
-| **Flashblocks (200ms)** | Sub-second defense execution — difference between saving and losing a position |
-| **TEE Block Building** | Prevents MEV bots from front-running defense to liquidate first |
-| **ERC-7683 Intents** | Native cross-chain settlement — pool assets become source-chain collateral |
-| **v4 Hooks** | Core defense logic — hook manages reserve via v4-native ERC-6909 accounting |
+## Bounty Alignment
 
-## Team
+### Uniswap Foundation ($20K pool)
+- Novel hook combining liquidity management + risk management + dynamic fees
+- ERC-6909 defense reserve demonstrates deep v4 flash accounting understanding
+- `poolManager.donate()` for LP reward distribution — v4-native mechanism
+- Dual adapter pattern proves hooks as composable infrastructure
 
-Built by Yudhishthra & Team for UHI8 Hookathon 2026.
+### Unichain ($10K pool)
+- Flashblocks: ~400ms detection-to-defense response time
+- TEE: Priority ordering prevents MEV front-running of defense transactions
+- ERC-7683: Native cross-chain intent settlement via `LiquidShieldSettler`
+- All four Unichain capabilities used together — not forced, essential
+
+### Reactive Network ($5K pool)
+- Cross-chain health factor monitoring = THE canonical RSC use case
+- RSC subscribes to lending protocol events across multiple chains
+- Evaluates conditions → triggers cross-chain callback to hook
+- `PositionMonitor.sol` with 19 dedicated tests
+
+---
+
+## Technical Decisions
+
+**Why ERC-6909 defense reserve, not "draw from pool"?**
+v4's flash accounting requires all deltas to resolve to zero within a single `unlock` callback. The hook can't `take()` tokens and send them cross-chain expecting repayment later — the transaction would revert. Instead, the hook accumulates defense capital as ERC-6909 claims (from premium revenue) and atomically burns/takes when defense triggers.
+
+**Why `poolManager.donate()` for LP premiums?**
+It's v4's native mechanism for distributing tokens to in-range LPs. No custom accounting needed. Premiums collected by the hook are periodically donated to the pool, flowing to LPs proportional to their liquidity.
+
+**Why batched intents, not TWAMM, for gradual unwind?**
+TWAMM is a pool-side swap mechanism. Defense unwind is a cross-chain operation (withdraw collateral → sell → repay). Each step requires a full ERC-7683 settlement cycle. The hook emits N sequential intents — Unichain-side accounting updates at Flashblock speed, but source chain execution is bound by its block time.
+
+**Why USDC/WETH pool?**
+Both assets serve as defense capital — WETH for WETH-collateralized positions, USDC for USDC-collateralized positions. No swap needed to deploy defense capital, reducing slippage and latency.
+
+---
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](./LICENSE).
+
+## Links
+
+- **Demo Video**: [Loom](LOOM_LINK_HERE)
+- **Hookathon**: [UHI8 by Atrium Academy](https://atrium.academy/uniswap)
+- **Uniswap v4 Docs**: [docs.uniswap.org](https://docs.uniswap.org/contracts/v4/overview)
+- **Unichain Docs**: [docs.unichain.org](https://docs.unichain.org)
+- **Reactive Network**: [reactive.network](https://reactive.network)
+
+---
+
+**Built for the UHI8 Hookathon by [Yudhishthra](https://github.com/0xYudhishthra)**
+
+*Turning passive liquidity into active insurance infrastructure.*
