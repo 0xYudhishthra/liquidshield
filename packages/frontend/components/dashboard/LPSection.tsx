@@ -48,20 +48,12 @@ export function LPSection({ address }: { address: string }) {
           </div>
           <div className="flex gap-4 mt-6">
             <a
-              href="https://app.uniswap.org/pool"
+              href="https://aqua0.xyz/pool"
               target="_blank"
               rel="noopener noreferrer"
               className="px-4 py-2 bg-shield-primary rounded-lg text-white text-sm"
             >
-              Add Liquidity
-            </a>
-            <a
-              href="https://app.uniswap.org/pool"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-4 py-2 bg-shield-surface border border-shield-border rounded-lg text-white text-sm"
-            >
-              Remove Liquidity
+              Provide Liquidity via Aqua0
             </a>
           </div>
         </div>
