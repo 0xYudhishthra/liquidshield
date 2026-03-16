@@ -12,7 +12,10 @@
     "test:verbose": "cd packages/contracts && forge test -vvv",
     "test:coverage": "cd packages/contracts && forge coverage",
     "deploy:hook": "cd packages/contracts && forge script script/DeployHook.s.sol --broadcast",
-    "deploy:executor": "cd packages/contracts && forge script script/DeployExecutor.s.sol --broadcast"
+    "deploy:executor": "cd packages/contracts && forge script script/DeployExecutor.s.sol --broadcast",
+    "deploy:unichain": "cd packages/contracts && forge script script/DeployAll.s.sol --broadcast --rpc-url unichain_sepolia",
+    "deploy:arbitrum": "cd packages/contracts && ADAPTER_TYPE=aave forge script script/DeploySourceChain.s.sol --broadcast --rpc-url arbitrum_sepolia",
+    "deploy:ethereum": "cd packages/contracts && ADAPTER_TYPE=morpho forge script script/DeploySourceChain.s.sol --broadcast --rpc-url ethereum_sepolia"
   },
   "keywords": [
     "uniswap",
