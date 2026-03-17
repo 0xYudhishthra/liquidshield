@@ -18,6 +18,7 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 import {LiquidShieldHook} from "../src/hooks/LiquidShieldHook.sol";
 import {LiquidShieldSettler} from "../src/settler/LiquidShieldSettler.sol";
+import {SharedLiquidityPool} from "../src/aqua0/SharedLiquidityPool.sol";
 import {Errors} from "../src/lib/Errors.sol";
 import {Events} from "../src/lib/Events.sol";
 
@@ -28,6 +29,7 @@ contract LiquidShieldHookTest is Test, Deployers {
 
     LiquidShieldHook public hook;
     LiquidShieldSettler public settlerContract;
+    SharedLiquidityPool public sharedPool;
     PoolKey public poolKey;
     PoolId public poolId;
 
@@ -43,22 +45,29 @@ contract LiquidShieldHookTest is Test, Deployers {
         // Deploy test tokens (currency0 and currency1, properly ordered)
         deployMintAndApprove2Currencies();
 
+        // Deploy SharedLiquidityPool
+        sharedPool = new SharedLiquidityPool(address(this));
+
         // Calculate hook address from required permission flags
         uint160 hookFlags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG
                 | Hooks.AFTER_ADD_LIQUIDITY_FLAG
                 | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
                 | Hooks.BEFORE_SWAP_FLAG
+                | Hooks.AFTER_SWAP_FLAG
         );
 
         // Deploy hook at the correct address
         address hookAddr = address(hookFlags);
         deployCodeTo(
             "LiquidShieldHook.sol:LiquidShieldHook",
-            abi.encode(address(manager)),
+            abi.encode(address(manager), address(sharedPool)),
             hookAddr
         );
-        hook = LiquidShieldHook(hookAddr);
+        hook = LiquidShieldHook(payable(hookAddr));
+
+        // Set hook on SharedLiquidityPool
+        sharedPool.setHook(hookAddr);
 
         // Initialize pool with dynamic fee and our hook
         poolKey = PoolKey({
@@ -118,7 +127,7 @@ contract LiquidShieldHookTest is Test, Deployers {
         assertFalse(perms.beforeRemoveLiquidity);
         assertTrue(perms.afterRemoveLiquidity);
         assertTrue(perms.beforeSwap);
-        assertFalse(perms.afterSwap);
+        assertTrue(perms.afterSwap);
         assertFalse(perms.beforeDonate);
         assertFalse(perms.afterDonate);
         assertFalse(perms.beforeSwapReturnDelta);
@@ -740,6 +749,80 @@ contract LiquidShieldHookTest is Test, Deployers {
         uint256 result = amount > minDefense ? amount : minDefense;
 
         assertTrue(result <= positionSize, "Defense amount exceeds position size");
+    }
+
+    // ================================================================
+    // AQUA0 JIT INTEGRATION
+    // ================================================================
+
+    function test_swapWorksWithEmptySharedPool() public {
+        // Add liquidity to pool so swaps can execute
+        vm.prank(alice);
+        modifyLiquidityRouter.modifyLiquidity(
+            poolKey,
+            ModifyLiquidityParams({
+                tickLower: -120,
+                tickUpper: 120,
+                liquidityDelta: 100e18,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        // Execute a swap — should work with empty SharedLiquidityPool (JIT is no-op)
+        vm.prank(bob);
+        swapRouter.swap(
+            poolKey,
+            SwapParams({
+                zeroForOne: true,
+                amountSpecified: -1e18,
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            PoolSwapTest.TestSettings({
+                takeClaims: false,
+                settleUsingBurn: false
+            }),
+            ""
+        );
+    }
+
+    function test_defenseStillWorksAfterSwap() public {
+        // Add liquidity and do a swap first
+        vm.prank(alice);
+        modifyLiquidityRouter.modifyLiquidity(
+            poolKey,
+            ModifyLiquidityParams({
+                tickLower: -120,
+                tickUpper: 120,
+                liquidityDelta: 100e18,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        vm.prank(bob);
+        swapRouter.swap(
+            poolKey,
+            SwapParams({
+                zeroForOne: true,
+                amountSpecified: -1e18,
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            PoolSwapTest.TestSettings({
+                takeClaims: false,
+                settleUsingBurn: false
+            }),
+            ""
+        );
+
+        // Now trigger defense — should still work atomically in separate unlock cycle
+        bytes32 posId = _registerAndFundPosition(alice, currency0);
+
+        vm.prank(rscCallbackAddr);
+        hook.triggerDefense(posId, 11e17);
+
+        LiquidShieldHook.ProtectedPosition memory pos = hook.getPosition(posId);
+        assertEq(uint8(pos.status), uint8(LiquidShieldHook.PositionStatus.DEFENDING));
     }
 
     // ================================================================

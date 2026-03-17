@@ -18,6 +18,7 @@ import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {LiquidShieldHook} from "../../src/hooks/LiquidShieldHook.sol";
 import {LiquidShieldRouter} from "../../src/router/LiquidShieldRouter.sol";
 import {LiquidShieldSettler} from "../../src/settler/LiquidShieldSettler.sol";
+import {SharedLiquidityPool} from "../../src/aqua0/SharedLiquidityPool.sol";
 import {ILiquidShieldHook} from "../../src/interfaces/ILiquidShieldHook.sol";
 import {Errors} from "../../src/lib/Errors.sol";
 
@@ -30,6 +31,7 @@ contract FullDefenseFlowTest is Test, Deployers {
     LiquidShieldHook public hook;
     LiquidShieldRouter public router;
     LiquidShieldSettler public settler;
+    SharedLiquidityPool public sharedPool;
 
     PoolKey public poolKey;
     PoolId public poolId;
@@ -43,19 +45,26 @@ contract FullDefenseFlowTest is Test, Deployers {
         deployFreshManagerAndRouters();
         deployMintAndApprove2Currencies();
 
+        // Deploy SharedLiquidityPool
+        sharedPool = new SharedLiquidityPool(address(this));
+
         uint160 hookFlags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG
                 | Hooks.AFTER_ADD_LIQUIDITY_FLAG
                 | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
                 | Hooks.BEFORE_SWAP_FLAG
+                | Hooks.AFTER_SWAP_FLAG
         );
         address hookAddr = address(hookFlags);
         deployCodeTo(
             "LiquidShieldHook.sol:LiquidShieldHook",
-            abi.encode(address(manager)),
+            abi.encode(address(manager), address(sharedPool)),
             hookAddr
         );
-        hook = LiquidShieldHook(hookAddr);
+        hook = LiquidShieldHook(payable(hookAddr));
+
+        // Set hook on SharedLiquidityPool
+        sharedPool.setHook(hookAddr);
 
         // Deploy settler and router
         settler = new LiquidShieldSettler(hookAddr);
