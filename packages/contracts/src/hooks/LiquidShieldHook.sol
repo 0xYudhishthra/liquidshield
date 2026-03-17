@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
@@ -14,6 +14,9 @@ import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.s
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {Aqua0BaseHook} from "../aqua0/Aqua0BaseHook.sol";
+import {SharedLiquidityPool} from "../aqua0/SharedLiquidityPool.sol";
 import {Errors} from "../lib/Errors.sol";
 import {Events} from "../lib/Events.sol";
 
@@ -29,8 +32,8 @@ interface ILiquidShieldSettler {
 /// @author LiquidShield Team
 /// @notice Core Uniswap v4 hook that orchestrates cross-chain liquidation defense
 /// @dev Manages protected positions, defense reserves (ERC-6909 claims), premium collection,
-///      LP premium donation, and defense-aware dynamic fees. Follows CEI pattern throughout.
-contract LiquidShieldHook is BaseHook, IUnlockCallback {
+///      LP premium donation, defense-aware dynamic fees, and Aqua0 shared JIT liquidity.
+contract LiquidShieldHook is IHooks, Aqua0BaseHook, IUnlockCallback {
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
     using SafeERC20 for IERC20;
@@ -129,15 +132,21 @@ contract LiquidShieldHook is BaseHook, IUnlockCallback {
 
     /// @notice Deploys the LiquidShield hook
     /// @param _poolManager Uniswap v4 PoolManager address
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
+    /// @param _sharedPool Aqua0 SharedLiquidityPool address
+    constructor(IPoolManager _poolManager, SharedLiquidityPool _sharedPool)
+        Aqua0BaseHook(_poolManager, _sharedPool)
+    {
         owner = msg.sender;
     }
+
+    /// @notice Accept ETH for Aqua0 delta settlement
+    receive() external payable {}
 
     // ============ EXTERNAL FUNCTIONS (VIEW/PURE) ============
 
     /// @notice Returns the hook's required permissions
     /// @return Permissions struct with enabled callbacks
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
@@ -146,7 +155,7 @@ contract LiquidShieldHook is BaseHook, IUnlockCallback {
             beforeRemoveLiquidity: false,
             afterRemoveLiquidity: true,
             beforeSwap: true,
-            afterSwap: false,
+            afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
@@ -175,6 +184,92 @@ contract LiquidShieldHook is BaseHook, IUnlockCallback {
     /// @return premiums1 Accumulated premiums for currency1
     function getAccumulatedPremiums() external view returns (uint256 premiums0, uint256 premiums1) {
         return (accumulatedPremiumsToken0, accumulatedPremiumsToken1);
+    }
+
+    // ============ IHooks IMPLEMENTATIONS ============
+
+    function beforeInitialize(address, PoolKey calldata, uint160)
+        external pure returns (bytes4)
+    {
+        return IHooks.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address, PoolKey calldata key, uint160, int24)
+        external onlyPoolManager returns (bytes4)
+    {
+        poolKey = key;
+        return IHooks.afterInitialize.selector;
+    }
+
+    function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        external pure returns (bytes4)
+    {
+        return IHooks.beforeAddLiquidity.selector;
+    }
+
+    function afterAddLiquidity(
+        address sender, PoolKey calldata, ModifyLiquidityParams calldata,
+        BalanceDelta delta, BalanceDelta, bytes calldata
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        int128 amt = delta.amount0();
+        uint256 absAmt = amt > 0 ? uint256(int256(amt)) : uint256(int256(-amt));
+        lpShares[sender] += absAmt;
+        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        external pure returns (bytes4)
+    {
+        return IHooks.beforeRemoveLiquidity.selector;
+    }
+
+    function afterRemoveLiquidity(
+        address sender, PoolKey calldata, ModifyLiquidityParams calldata,
+        BalanceDelta delta, BalanceDelta, bytes calldata
+    ) external onlyPoolManager returns (bytes4, BalanceDelta) {
+        int128 amt = delta.amount0();
+        uint256 absAmt = amt > 0 ? uint256(int256(amt)) : uint256(int256(-amt));
+        if (lpShares[sender] >= absAmt) {
+            lpShares[sender] -= absAmt;
+        } else {
+            lpShares[sender] = 0;
+        }
+        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    function beforeSwap(address, PoolKey calldata key, SwapParams calldata, bytes calldata)
+        external onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24)
+    {
+        // Inject Aqua0 shared JIT liquidity
+        _addVirtualLiquidity(key);
+
+        // Apply defense-aware dynamic fee
+        uint24 fee = _calculateDynamicFee();
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee | LPFeeLibrary.OVERRIDE_FEE_FLAG);
+    }
+
+    function afterSwap(address, PoolKey calldata key, SwapParams calldata, BalanceDelta, bytes calldata)
+        external onlyPoolManager returns (bytes4, int128)
+    {
+        // Remove Aqua0 JIT liquidity and settle deltas
+        bool hasJIT = _removeVirtualLiquidity(key);
+        if (hasJIT) {
+            _settleVirtualLiquidityDeltas(key);
+        }
+
+        return (IHooks.afterSwap.selector, 0);
+    }
+
+    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
+        external pure returns (bytes4)
+    {
+        return IHooks.beforeDonate.selector;
+    }
+
+    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
+        external pure returns (bytes4)
+    {
+        return IHooks.afterDonate.selector;
     }
 
     // ============ EXTERNAL FUNCTIONS (STATE-CHANGING) ============
@@ -480,46 +575,6 @@ contract LiquidShieldHook is BaseHook, IUnlockCallback {
     }
 
     // ============ INTERNAL FUNCTIONS (STATE-CHANGING) ============
-
-    /// @notice Hook callback: stores the pool key after initialization
-    function _afterInitialize(address, PoolKey calldata key, uint160, int24) internal override returns (bytes4) {
-        poolKey = key;
-        return this.afterInitialize.selector;
-    }
-
-    /// @notice Hook callback: applies defense-aware dynamic fee before each swap
-    function _beforeSwap(address, PoolKey calldata, SwapParams calldata, bytes calldata)
-        internal view override returns (bytes4, BeforeSwapDelta, uint24)
-    {
-        uint24 fee = _calculateDynamicFee();
-        return (this.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee | 0x400000);
-    }
-
-    /// @notice Hook callback: tracks LP shares after liquidity addition
-    function _afterAddLiquidity(
-        address sender, PoolKey calldata, ModifyLiquidityParams calldata,
-        BalanceDelta delta, BalanceDelta, bytes calldata
-    ) internal override returns (bytes4, BalanceDelta) {
-        int128 amt = delta.amount0();
-        uint256 absAmt = amt > 0 ? uint256(int256(amt)) : uint256(int256(-amt));
-        lpShares[sender] += absAmt;
-        return (this.afterAddLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    /// @notice Hook callback: tracks LP shares after liquidity removal
-    function _afterRemoveLiquidity(
-        address sender, PoolKey calldata, ModifyLiquidityParams calldata,
-        BalanceDelta delta, BalanceDelta, bytes calldata
-    ) internal override returns (bytes4, BalanceDelta) {
-        int128 amt = delta.amount0();
-        uint256 absAmt = amt > 0 ? uint256(int256(amt)) : uint256(int256(-amt));
-        if (lpShares[sender] >= absAmt) {
-            lpShares[sender] -= absAmt;
-        } else {
-            lpShares[sender] = 0;
-        }
-        return (this.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
-    }
 
     /// @notice Handles defense extraction in the unlock callback (action 0)
     /// @dev Burns ERC-6909 claims and takes tokens from PoolManager
