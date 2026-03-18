@@ -3,35 +3,21 @@ pragma solidity >=0.8.26;
 
 import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
 import {AbstractReactive} from "reactive-lib/src/abstract-base/AbstractReactive.sol";
-import {Events} from "../lib/Events.sol";
 
 /// @title PositionMonitor
 /// @author LiquidShield Team
-/// @notice Reactive Smart Contract (RSC) deployed on Reactive Network (Lasna).
-///         Two-hop architecture:
-///         Hop 1: CRON tick → callback to HealthChecker on source chain (reads Aave health on-chain)
-///         Hop 2: HealthChecker emits HealthDanger → RSC reacts → callback to DefenseCallback on Unichain
-/// @dev Follows patterns from Reactive Network's official demos:
-///      - CRON subscription from Aave Liquidation Protection demo
-///      - Event-based reaction from Uniswap Stop Order demo
-///      - Health factor read on the chain where Aave lives (not in RSC)
+/// @notice RSC deployed on Reactive Network (Lasna). Two-hop architecture:
+///         Hop 1: On CRON tick, sends callback to HealthChecker on source chain.
+///                HealthChecker reads Aave health on-chain. If dangerous, emits HealthDanger.
+///         Hop 2: RSC subscribes to HealthDanger events from HealthChecker.
+///                On HealthDanger, sends callback to DefenseCallback on Unichain.
+/// @dev No position storage in RSC. Position data lives exclusively on HealthChecker.
+///      The RSC is a pure event router — CRON → HealthChecker, HealthDanger → DefenseCallback.
 contract PositionMonitor is IReactive, AbstractReactive {
-
-    // ============ CONSTANTS ============
 
     uint64 private constant CALLBACK_GAS_LIMIT = 2_000_000;
 
-    /// @dev keccak256("HealthDanger(bytes32,uint256,address)")
-    uint256 private constant HEALTH_DANGER_TOPIC =
-        uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
-
-    /// @dev keccak256("CheckCycleCompleted(uint256,uint256,uint256)")
-    uint256 private constant CHECK_CYCLE_COMPLETED_TOPIC =
-        uint256(keccak256("CheckCycleCompleted(uint256,uint256,uint256)"));
-
-    // ============ STATE ============
-
-    /// @notice HealthChecker contract on the source chain (same chain as Aave)
+    /// @notice HealthChecker contract on the source chain (e.g., Base Sepolia)
     address public healthChecker;
 
     /// @notice Source chain ID where HealthChecker + Aave live
@@ -40,25 +26,16 @@ contract PositionMonitor is IReactive, AbstractReactive {
     /// @notice DefenseCallback contract on Unichain
     address public defenseCallback;
 
-    /// @notice Unichain chain ID
+    /// @notice Unichain chain ID (1301)
     uint256 public unichainChainId;
 
-    /// @notice CRON topic for periodic health checks
+    /// @notice CRON topic for periodic ticks
     uint256 public cronTopic;
 
-    /// @notice Owner
-    address public owner;
+    /// @notice HealthDanger event topic from HealthChecker
+    /// @dev keccak256("HealthDanger(bytes32,uint256,address)")
+    uint256 public constant HEALTH_DANGER_TOPIC = uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
 
-    /// @notice Processing lock (prevents overlapping CRON cycles)
-    bool public processingActive;
-
-    // ============ CONSTRUCTOR ============
-
-    /// @param _healthChecker HealthChecker contract on the source chain
-    /// @param _sourceChainId Chain ID where HealthChecker lives (e.g., 84532 for Base Sepolia)
-    /// @param _defenseCallback DefenseCallback contract on Unichain
-    /// @param _unichainChainId Unichain chain ID (1301)
-    /// @param _cronTopic CRON topic for periodic monitoring
     constructor(
         address _healthChecker,
         uint256 _sourceChainId,
@@ -71,11 +48,9 @@ contract PositionMonitor is IReactive, AbstractReactive {
         defenseCallback = _defenseCallback;
         unichainChainId = _unichainChainId;
         cronTopic = _cronTopic;
-        owner = msg.sender;
-        processingActive = false;
 
         if (!vm) {
-            // Hop 1 trigger: subscribe to CRON events on Reactive Network
+            // Subscribe to CRON ticks (Hop 1 trigger)
             service.subscribe(
                 block.chainid,
                 address(service),
@@ -85,7 +60,7 @@ contract PositionMonitor is IReactive, AbstractReactive {
                 REACTIVE_IGNORE
             );
 
-            // Hop 2 trigger: subscribe to HealthDanger events from HealthChecker
+            // Subscribe to HealthDanger events from HealthChecker on source chain (Hop 2 trigger)
             service.subscribe(
                 _sourceChainId,
                 _healthChecker,
@@ -94,59 +69,32 @@ contract PositionMonitor is IReactive, AbstractReactive {
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE
             );
-
-            // Reset lock: subscribe to CheckCycleCompleted events
-            service.subscribe(
-                _sourceChainId,
-                _healthChecker,
-                CHECK_CYCLE_COMPLETED_TOPIC,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE,
-                REACTIVE_IGNORE
-            );
         }
     }
-
-    // ============ REACT ============
 
     function react(LogRecord calldata log) external vmOnly {
-
         if (log.topic_0 == cronTopic) {
-            // ─── HOP 1: CRON tick → send callback to HealthChecker on source chain ───
-            if (processingActive) return;
-            processingActive = true;
-
-            bytes memory payload = abi.encodeWithSignature(
+            // Hop 1: CRON tick → send checkPositions() to HealthChecker on source chain
+            bytes memory healthPayload = abi.encodeWithSignature(
                 "checkPositions(address)",
-                address(0) // placeholder — Reactive overwrites first 160 bits with RVM ID
+                address(0)
             );
+            emit Callback(sourceChainId, healthChecker, CALLBACK_GAS_LIMIT, healthPayload);
 
-            emit Callback(sourceChainId, healthChecker, CALLBACK_GAS_LIMIT, payload);
-
-        } else if (log.topic_0 == HEALTH_DANGER_TOPIC && log._contract == healthChecker) {
-            // ─── HOP 2: HealthDanger detected → trigger defense on Unichain ───
+        } else if (log.topic_0 == HEALTH_DANGER_TOPIC) {
+            // Hop 2: HealthDanger event → forward to DefenseCallback on Unichain
+            // HealthDanger(bytes32 indexed positionId, uint256 indexed healthFactor, address indexed user)
+            // topic_1 = positionId, topic_2 = healthFactor
             bytes32 positionId = bytes32(log.topic_1);
-            uint256 currentHealth = uint256(log.topic_2);
+            uint256 healthFactor = log.topic_2;
 
-            bytes memory payload = abi.encodeWithSignature(
-                "onDefenseTriggered(bytes32,uint256)",
+            bytes memory defensePayload = abi.encodeWithSignature(
+                "onDefenseTriggered(address,bytes32,uint256)",
+                address(0),
                 positionId,
-                currentHealth
+                healthFactor
             );
-
-            emit Callback(unichainChainId, defenseCallback, CALLBACK_GAS_LIMIT, payload);
-            emit Events.DefenseCallbackEmitted(positionId, currentHealth);
-
-        } else if (log.topic_0 == CHECK_CYCLE_COMPLETED_TOPIC && log._contract == healthChecker) {
-            // ─── RESET: cycle completed, allow next CRON trigger ───
-            processingActive = false;
+            emit Callback(unichainChainId, defenseCallback, CALLBACK_GAS_LIMIT, defensePayload);
         }
-    }
-
-    // ============ ADMIN ============
-
-    function resetProcessing() external {
-        require(msg.sender == owner, "Only owner");
-        processingActive = false;
     }
 }

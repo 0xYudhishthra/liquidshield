@@ -4,15 +4,12 @@ pragma solidity >=0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {PositionMonitor} from "../src/rsc/PositionMonitor.sol";
 import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
-import {Events} from "../src/lib/Events.sol";
 
 contract MockSystemContract {
     uint256 public subscribeCallCount;
-
     function subscribe(uint256, address, uint256, uint256, uint256, uint256) external {
         subscribeCallCount++;
     }
-
     function debt(address) external pure returns (uint256) { return 0; }
     receive() external payable {}
     fallback() external payable {}
@@ -26,11 +23,6 @@ contract PositionMonitorTest is Test {
     uint256 public constant SOURCE_CHAIN_ID = 84532;
     uint256 public constant CRON_TOPIC = 123456;
     address public constant SERVICE_ADDR = 0x0000000000000000000000000000000000fffFfF;
-
-    uint256 public constant HEALTH_DANGER_TOPIC =
-        uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
-    uint256 public constant CHECK_CYCLE_COMPLETED_TOPIC =
-        uint256(keccak256("CheckCycleCompleted(uint256,uint256,uint256)"));
 
     function setUp() public {
         MockSystemContract mockService = new MockSystemContract();
@@ -46,27 +38,29 @@ contract PositionMonitorTest is Test {
         assertEq(monitor.defenseCallback(), defenseCallback);
         assertEq(monitor.unichainChainId(), UNICHAIN_CHAIN_ID);
         assertEq(monitor.cronTopic(), CRON_TOPIC);
-        assertFalse(monitor.processingActive());
     }
 
-    function test_constructor_subscribes3Topics() public view {
-        // CRON + HealthDanger + CheckCycleCompleted = 3 subscriptions
+    function test_constructor_subscribesToCronAndHealthDanger() public view {
+        // Should have 2 subscriptions: CRON + HealthDanger
         MockSystemContract mock = MockSystemContract(payable(SERVICE_ADDR));
-        assertEq(mock.subscribeCallCount(), 3);
+        assertEq(mock.subscribeCallCount(), 2);
     }
 
-    function test_react_cronTriggersSendToHealthChecker() public {
-        // Deploy in VM context
+    function test_healthDangerTopic_isCorrect() public view {
+        uint256 expected = uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
+        assertEq(monitor.HEALTH_DANGER_TOPIC(), expected);
+    }
+
+    function test_react_cronTick_emitsHealthCheckerCallback() public {
+        // Deploy in VM mode (no service)
         vm.etch(SERVICE_ADDR, "");
         PositionMonitor vmMonitor = new PositionMonitor(
             healthChecker, SOURCE_CHAIN_ID, defenseCallback, UNICHAIN_CHAIN_ID, CRON_TOPIC
         );
 
         IReactive.LogRecord memory log = IReactive.LogRecord({
-            chain_id: 5318007,
-            _contract: SERVICE_ADDR,
-            topic_0: CRON_TOPIC,
-            topic_1: 0, topic_2: 0, topic_3: 0,
+            chain_id: 5318007, _contract: SERVICE_ADDR,
+            topic_0: CRON_TOPIC, topic_1: 0, topic_2: 0, topic_3: 0,
             data: "", block_number: 100, op_code: 0,
             block_hash: 0, tx_hash: 0, log_index: 0
         });
@@ -74,27 +68,26 @@ contract PositionMonitorTest is Test {
         // Should emit Callback to healthChecker on source chain
         vm.expectEmit(true, true, true, false);
         emit IReactive.Callback(SOURCE_CHAIN_ID, healthChecker, 2_000_000, "");
-
         vmMonitor.react(log);
-        assertTrue(vmMonitor.processingActive());
     }
 
-    function test_react_healthDangerTriggersDefenseCallback() public {
+    function test_react_healthDanger_emitsDefenseCallback() public {
         vm.etch(SERVICE_ADDR, "");
         PositionMonitor vmMonitor = new PositionMonitor(
             healthChecker, SOURCE_CHAIN_ID, defenseCallback, UNICHAIN_CHAIN_ID, CRON_TOPIC
         );
 
-        bytes32 posId = keccak256("test_pos");
-        uint256 currentHealth = 11e17; // 1.1x — below threshold
+        bytes32 positionId = keccak256("pos1");
+        uint256 healthFactor = 12e17; // 1.2
+
+        uint256 healthDangerTopic = uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
 
         IReactive.LogRecord memory log = IReactive.LogRecord({
-            chain_id: SOURCE_CHAIN_ID,
-            _contract: healthChecker,
-            topic_0: HEALTH_DANGER_TOPIC,
-            topic_1: uint256(posId),
-            topic_2: currentHealth,
-            topic_3: 0,
+            chain_id: SOURCE_CHAIN_ID, _contract: healthChecker,
+            topic_0: healthDangerTopic,
+            topic_1: uint256(positionId),
+            topic_2: healthFactor,
+            topic_3: uint256(uint160(makeAddr("user"))),
             data: "", block_number: 200, op_code: 0,
             block_hash: 0, tx_hash: 0, log_index: 0
         });
@@ -102,57 +95,7 @@ contract PositionMonitorTest is Test {
         // Should emit Callback to defenseCallback on Unichain
         vm.expectEmit(true, true, true, false);
         emit IReactive.Callback(UNICHAIN_CHAIN_ID, defenseCallback, 2_000_000, "");
-
         vmMonitor.react(log);
-    }
-
-    function test_react_cycleCompletedResetsLock() public {
-        vm.etch(SERVICE_ADDR, "");
-        PositionMonitor vmMonitor = new PositionMonitor(
-            healthChecker, SOURCE_CHAIN_ID, defenseCallback, UNICHAIN_CHAIN_ID, CRON_TOPIC
-        );
-
-        // First trigger CRON to set processingActive = true
-        IReactive.LogRecord memory cronLog = IReactive.LogRecord({
-            chain_id: 5318007, _contract: SERVICE_ADDR,
-            topic_0: CRON_TOPIC, topic_1: 0, topic_2: 0, topic_3: 0,
-            data: "", block_number: 100, op_code: 0,
-            block_hash: 0, tx_hash: 0, log_index: 0
-        });
-        vmMonitor.react(cronLog);
-        assertTrue(vmMonitor.processingActive());
-
-        // Then CheckCycleCompleted resets it
-        IReactive.LogRecord memory completedLog = IReactive.LogRecord({
-            chain_id: SOURCE_CHAIN_ID, _contract: healthChecker,
-            topic_0: CHECK_CYCLE_COMPLETED_TOPIC, topic_1: 0, topic_2: 0, topic_3: 0,
-            data: "", block_number: 201, op_code: 0,
-            block_hash: 0, tx_hash: 0, log_index: 0
-        });
-        vmMonitor.react(completedLog);
-        assertFalse(vmMonitor.processingActive());
-    }
-
-    function test_react_cronSkipsWhenProcessing() public {
-        vm.etch(SERVICE_ADDR, "");
-        PositionMonitor vmMonitor = new PositionMonitor(
-            healthChecker, SOURCE_CHAIN_ID, defenseCallback, UNICHAIN_CHAIN_ID, CRON_TOPIC
-        );
-
-        IReactive.LogRecord memory cronLog = IReactive.LogRecord({
-            chain_id: 5318007, _contract: SERVICE_ADDR,
-            topic_0: CRON_TOPIC, topic_1: 0, topic_2: 0, topic_3: 0,
-            data: "", block_number: 100, op_code: 0,
-            block_hash: 0, tx_hash: 0, log_index: 0
-        });
-
-        vmMonitor.react(cronLog); // first tick — triggers
-        assertTrue(vmMonitor.processingActive());
-
-        // Second tick — should be skipped (no additional Callback)
-        vmMonitor.react(cronLog);
-        // Still processing, didn't crash
-        assertTrue(vmMonitor.processingActive());
     }
 
     function test_react_ignoresUnknownEvents() public {
@@ -162,14 +105,13 @@ contract PositionMonitorTest is Test {
         );
 
         IReactive.LogRecord memory log = IReactive.LogRecord({
-            chain_id: SOURCE_CHAIN_ID, _contract: healthChecker,
-            topic_0: 999999, // unknown topic
-            topic_1: 0, topic_2: 0, topic_3: 0,
+            chain_id: 5318007, _contract: SERVICE_ADDR,
+            topic_0: 999999, topic_1: 0, topic_2: 0, topic_3: 0,
             data: "", block_number: 100, op_code: 0,
             block_hash: 0, tx_hash: 0, log_index: 0
         });
 
-        // Should not revert, just no-op
+        // Should not revert, just return silently
         vmMonitor.react(log);
     }
 

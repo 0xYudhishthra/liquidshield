@@ -29,10 +29,14 @@ contract DefenseCallback is AbstractCallback {
     }
 
     /// @notice Called by the Reactive Network callback proxy when a defense is triggered
-    /// @dev Only callable by the authorized callback proxy (enforced by AbstractCallback)
+    /// @dev Only callable by the authorized callback proxy (enforced by AbstractCallback).
+    ///      The first parameter (sender) is overwritten by Reactive Network with the RVM ID.
+    ///      Position data must come AFTER the first address parameter.
+    /// @param sender RVM ID (overwritten by Reactive Network — do not use for logic)
     /// @param positionId The position that needs defense
     /// @param currentHealth The current health factor reported by the RSC
     function onDefenseTriggered(
+        address sender,
         bytes32 positionId,
         uint256 currentHealth
     ) external authorizedSenderOnly {
