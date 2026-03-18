@@ -23,6 +23,7 @@ import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SharedLiquidityPool} from "./SharedLiquidityPool.sol";
+import {IAqua0BaseHookMarker} from "./IAqua0BaseHookMarker.sol";
 import {
     TransientStateLibrary
 } from "v4-core/src/libraries/TransientStateLibrary.sol";
@@ -32,7 +33,7 @@ import {console} from "forge-std/console.sol";
 /// @author Aqua0 Team
 /// @notice Abstract contract that provides internal functions for custom Uniswap V4 hooks
 ///         to easily integrate Aqua0's internal JIT shared liquidity mechanism.
-abstract contract Aqua0BaseHook {
+abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
     using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
@@ -85,6 +86,16 @@ abstract contract Aqua0BaseHook {
     constructor(IPoolManager _poolManager, SharedLiquidityPool _sharedPool) {
         poolManager = _poolManager;
         sharedPool = _sharedPool;
+    }
+
+    // ─── ERC165 ──────────────────────────────────────────────────────────────
+
+    function isAqua0BaseHook() external pure returns (bool) {
+        return true;
+    }
+
+    function supportsInterface(bytes4 interfaceId) public view virtual returns (bool) {
+        return interfaceId == type(IAqua0BaseHookMarker).interfaceId;
     }
 
     // ─── Internal API for Custom Hooks ───────────────────────────────────────
