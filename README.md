@@ -163,8 +163,27 @@ Cross-chain health factor monitoring via Reactive Smart Contracts — the canoni
 
 | File | Description |
 |---|---|
-| [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC deployed on Reactive Network (Kopli testnet) — subscribes to lending protocol events, monitors health factors, triggers cross-chain callbacks to the hook |
-| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 19 Foundry tests: subscription, monitoring, callback triggering, multi-position support |
+| [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC deployed on Reactive Network (Lasna testnet) — inherits `AbstractReactive` + `IReactive`, subscribes to lending protocol events via `service.subscribe()`, emits `Callback` events for cross-chain delivery |
+| [`packages/contracts/src/rsc/DefenseCallback.sol`](./packages/contracts/src/rsc/DefenseCallback.sol) | Callback receiver on Unichain — inherits `AbstractCallback`, receives callbacks from Reactive callback proxy (`0x9299472A...FC4`), forwards `triggerDefense()` to hook |
+| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 14 Foundry tests: subscription, `react(LogRecord)` with `vmOnly`, callback emission, multi-position support |
+
+```mermaid
+sequenceDiagram
+    participant Aave as Aave V3 (Arbitrum)
+    participant RN as Reactive Network
+    participant RSC as PositionMonitor (RSC)
+    participant Proxy as Callback Proxy (Unichain)
+    participant CB as DefenseCallback
+    participant Hook as LiquidShieldHook
+
+    Aave->>RN: ReserveDataUpdated event
+    RN->>RSC: react(LogRecord)
+    RSC->>RSC: Look up monitored positions
+    RSC-->>RN: emit Callback(unichainChainId, callbackReceiver, payload)
+    RN->>Proxy: Deliver callback tx
+    Proxy->>CB: onDefenseTriggered(positionId, health)
+    CB->>Hook: triggerDefense(positionId, health)
+```
 
 ### ERC-7683 (Cross-Chain Intents)
 
@@ -174,6 +193,16 @@ Cross-chain health factor monitoring via Reactive Smart Contracts — the canoni
 | [`packages/contracts/test/LiquidShieldSettler.t.sol`](./packages/contracts/test/LiquidShieldSettler.t.sol) | 16 tests: order creation, nonce tracking, settlement, authorization |
 | [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Intent watcher — monitors `OrderOpened` events, decodes intent data |
 | [`packages/filler/src/executor.ts`](./packages/filler/src/executor.ts) | Filler executor — dispatches to strategy, fills on source chain |
+
+### Aqua0 Shared Liquidity (JIT Liquidity Amplification)
+
+LiquidShield inherits from Aqua0's `Aqua0BaseHook` to gain JIT shared liquidity — the same capital that backs defense reserves also serves as amplified LP liquidity during swaps.
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/aqua0/Aqua0BaseHook.sol`](./packages/contracts/src/aqua0/Aqua0BaseHook.sol) | Base hook with `_addVirtualLiquidity()`, `_removeVirtualLiquidity()`, `_settleVirtualLiquidityDeltas()` — injected in beforeSwap/afterSwap |
+| [`packages/contracts/src/aqua0/SharedLiquidityPool.sol`](./packages/contracts/src/aqua0/SharedLiquidityPool.sol) | Shared capital pool — holds user deposits, tracks per-user PnL, settles swap deltas with the hook |
+| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Inherits `Aqua0BaseHook` — `beforeSwap()` calls `_addVirtualLiquidity()`, `afterSwap()` calls `_removeVirtualLiquidity()` + `_settleVirtualLiquidityDeltas()` |
 
 ### Defense Executor & Lending Adapters
 
@@ -194,7 +223,7 @@ Cross-chain health factor monitoring via Reactive Smart Contracts — the canoni
 | **Unichain Sepolia** | 1301 | Hook deployment, pool, settlement |
 | **Arbitrum Sepolia** | 421614 | Aave V3 positions (source chain) |
 | **Ethereum Sepolia** | 11155111 | Morpho Blue positions (source chain) |
-| **Reactive Kopli** | — | RSC deployment for cross-chain monitoring |
+| **Reactive Lasna** | 5318007 | RSC deployment for cross-chain monitoring |
 
 ---
 
@@ -211,7 +240,8 @@ Cross-chain health factor monitoring via Reactive Smart Contracts — the canoni
 | `DefenseExecutor` | Ethereum Sepolia | `0x...` |
 | `AaveV3Adapter` | Arbitrum Sepolia | `0x...` |
 | `MorphoBlueAdapter` | Ethereum Sepolia | `0x...` |
-| `PositionMonitor` (RSC) | Reactive Kopli | `0x...` |
+| `DefenseCallback` | Unichain Sepolia | `0x...` |
+| `PositionMonitor` (RSC) | Reactive Lasna | `0x...` |
 
 *Deployment pending — addresses will be filled after testnet deployment.*
 
@@ -243,7 +273,7 @@ pnpm install
 ### Run Tests
 
 ```bash
-# Contract tests (126 tests)
+# Contract tests (150 tests)
 cd packages/contracts
 forge test -vvv
 
@@ -326,15 +356,16 @@ forge test --match-contract FullDefenseFlowTest       # End-to-end integration (
 
 | Test Suite | Tests | Description |
 |---|---|---|
-| `LiquidShieldHook.t.sol` | 50 | Registration, premium collection, defense trigger, ERC-6909 accounting, donate(), dynamic fees, fuzz testing |
-| `PositionMonitor.t.sol` | 19 | RSC subscription, monitoring, callback triggering, multi-position, fuzz testing |
+| `LiquidShieldHook.t.sol` | 52 | Registration, premium collection, defense trigger, ERC-6909 accounting, donate(), dynamic fees, Aqua0 JIT, fuzz testing |
+| `ProtectionMechanism.t.sol` | 27 | Delta atomicity, dynamic fee scaling, reserve depletion, premium boundaries, multi-user concurrent defenses, full E2E, fuzz |
 | `LiquidShieldSettler.t.sol` | 16 | Order creation, nonce tracking, settlement verification, authorization, fuzz testing |
+| `PositionMonitor.t.sol` | 14 | RSC subscription with AbstractReactive, react(LogRecord), vmOnly, callback emission |
 | `DefenseExecutor.t.sol` | 10 | Strategy dispatch, adapter routing, access control, fuzz testing |
 | `AaveV3Adapter.t.sol` | 9 | Health factor reads, collateral deposit, debt repay, fuzz testing |
 | `MorphoBlueAdapter.t.sol` | 8 | HF computation from position data + oracle + LLTV, collateral operations |
 | `LiquidShieldRouter.t.sol` | 7 | User registration, premium payments, unregistration |
 | `FullDefenseFlow.t.sol` | 7 | Full lifecycle: register → trigger → defend → settle → donate → unregister |
-| **Total Solidity** | **126** | |
+| **Total Solidity** | **150** | |
 | Backend tests | 285 | API routes, position aggregation, defense store, webhooks |
 | Frontend tests | 129 | Component tests, hook tests, utility tests |
 | Filler tests | 23 | Watcher, executor, strategy tests |
