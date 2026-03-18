@@ -70,6 +70,7 @@ contract AaveV3Adapter is ILendingAdapter {
     /// @param asset Address of the collateral token
     /// @param amount Amount of collateral to deposit
     function depositCollateral(address user, address asset, uint256 amount) external override {
+        // Tokens should already be in this contract (transferred by DefenseExecutor)
         IERC20(asset).approve(address(aavePool), amount);
         aavePool.supply(asset, amount, user, 0);
     }

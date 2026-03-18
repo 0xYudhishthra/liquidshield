@@ -25,7 +25,7 @@ contract MockLendingAdapter is ILendingAdapter {
         lastDepositUser = user;
         lastDepositAsset = asset;
         lastDepositAmount = amount;
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        // Tokens already transferred by executor
     }
 
     function repayDebt(address, address, uint256) external pure override {}

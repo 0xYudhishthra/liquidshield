@@ -76,7 +76,7 @@ contract DefenseExecutor is IDefenseExecutor {
 
         if (strategy == uint8(DefenseStrategy.COLLATERAL_TOPUP)) {
             IERC20(collateralAsset).safeTransferFrom(msg.sender, address(this), collateralAmount);
-            IERC20(collateralAsset).forceApprove(lendingAdapter, collateralAmount);
+            IERC20(collateralAsset).safeTransfer(lendingAdapter, collateralAmount);
             ILendingAdapter(lendingAdapter).depositCollateral(user, collateralAsset, collateralAmount);
         } else {
             ILendingAdapter(lendingAdapter).withdrawCollateral(user, collateralAsset, collateralAmount);
