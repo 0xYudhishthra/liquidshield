@@ -123,7 +123,7 @@ Hook periodically calls `poolManager.donate()` to distribute accumulated premium
 
 ## Shared Liquidity Layer (Aqua0)
 
-LiquidShield's hook inherits from `Aqua0BaseHook` — a shared liquidity layer we built that enables JIT (Just-In-Time) liquidity amplification. The same capital pool that backs defense reserves also serves as amplified LP liquidity during swaps.
+LiquidShield's hook inherits from `Aqua0BaseHook` — a shared liquidity layer we built that enables JIT (Just-In-Time) liquidity amplification. The hook operates two independent capital systems on the same pool: a **defense reserve** (ERC-6909 claims, funded by premiums and direct deposits) for liquidation protection, and **JIT shared liquidity** (from Aqua0's SharedLiquidityPool) for swap amplification. LPs earn yield from both systems.
 
 | File | Description |
 |---|---|
