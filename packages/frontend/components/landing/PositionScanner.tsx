@@ -9,6 +9,13 @@ const AAVE_POOL = "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27";
 const WETH_GATEWAY = "0x0568130e794429D2eEBC4dafE18f25Ff1a1ed8b6";
 const USDC_ADDRESS = "0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f";
 
+// Block explorers
+const BASE_EXPLORER = "https://sepolia.basescan.org";
+const UNICHAIN_EXPLORER = "https://sepolia.uniscan.xyz";
+
+// Backend API
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
 function HealthBadge({ value }: { value: number }) {
   const color = value > 1.5 ? "text-green-400/80" : value > 1.3 ? "text-yellow-400/80" : "text-red-400/80";
   return <span className={`font-mono text-sm ${color}`}>{value.toFixed(2)}</span>;
@@ -34,6 +41,7 @@ export function PositionScanner({ address }: PositionScannerProps) {
   const [createTxHash, setCreateTxHash] = useState<string | null>(null);
   const [protecting, setProtecting] = useState(false);
   const [protectTxHash, setProtectTxHash] = useState<string | null>(null);
+  const [premiumPaid, setPremiumPaid] = useState(false);
 
   const truncated = `${address.slice(0, 6)}...${address.slice(-4)}`;
 
@@ -44,7 +52,8 @@ export function PositionScanner({ address }: PositionScannerProps) {
       try {
         const data = await publicClient.readContract({
           address: AAVE_POOL as `0x${string}`,
-          abi: [{ name: "getUserAccountData", type: "function", stateMutability: "view",
+          abi: [{
+            name: "getUserAccountData", type: "function", stateMutability: "view",
             inputs: [{ type: "address" }],
             outputs: [
               { type: "uint256", name: "totalCollateralBase" },
@@ -60,14 +69,10 @@ export function PositionScanner({ address }: PositionScannerProps) {
         });
 
         const [collateral, debt, , , , hf] = data as bigint[];
-        const collateralUsd = Number(collateral) / 1e8;
-        const debtUsd = Number(debt) / 1e8;
-        const healthFactor = debt > 0n ? Number(hf) / 1e18 : 0;
-
         setPosition({
-          collateralUsd,
-          debtUsd,
-          healthFactor,
+          collateralUsd: Number(collateral) / 1e8,
+          debtUsd: Number(debt) / 1e8,
+          healthFactor: debt > 0n ? Number(hf) / 1e18 : 0,
           hasPosition: collateral > 0n,
         });
       } catch {
@@ -78,34 +83,32 @@ export function PositionScanner({ address }: PositionScannerProps) {
     fetchPosition();
   }, [address, publicClient, createTxHash]);
 
-  // Auto-create an Aave position (supply ETH + borrow USDC)
+  // Create Aave position on Base Sepolia (user stays on Base Sepolia)
   async function handleCreatePosition() {
     if (!walletClient) return;
     setCreating(true);
     try {
-      // Step 1: Supply 0.02 ETH via WETH Gateway
+      // Supply 0.02 ETH via WETH Gateway
       const supplyHash = await walletClient.sendTransaction({
         to: WETH_GATEWAY as `0x${string}`,
         data: ("0x474cf53d" +
           AAVE_POOL.slice(2).padStart(64, "0") +
           address.slice(2).padStart(64, "0") +
           "0000000000000000000000000000000000000000000000000000000000000000") as `0x${string}`,
-        value: BigInt("20000000000000000"), // 0.02 ETH
+        value: BigInt("20000000000000000"),
       });
 
       setCreateTxHash(supplyHash);
-
-      // Wait for confirmation
       if (publicClient) {
         await publicClient.waitForTransactionReceipt({ hash: supplyHash });
       }
 
-      // Step 2: Borrow 5 USDC
+      // Borrow 10 USDC
       const borrowData = ("0xa415bcad" +
         USDC_ADDRESS.slice(2).padStart(64, "0") +
-        "0000000000000000000000000000000000000000000000000000000000989680" + // 10 USDC (6 decimals)
-        "0000000000000000000000000000000000000000000000000000000000000002" + // variable rate
-        "0000000000000000000000000000000000000000000000000000000000000000" + // referral
+        "0000000000000000000000000000000000000000000000000000000000989680" +
+        "0000000000000000000000000000000000000000000000000000000000000002" +
+        "0000000000000000000000000000000000000000000000000000000000000000" +
         address.slice(2).padStart(64, "0")) as `0x${string}`;
 
       const borrowHash = await walletClient.sendTransaction({
@@ -118,7 +121,6 @@ export function PositionScanner({ address }: PositionScannerProps) {
         await publicClient.waitForTransactionReceipt({ hash: borrowHash });
       }
 
-      // Refresh position
       setLoading(true);
     } catch (err) {
       console.error("Failed to create position:", err);
@@ -126,12 +128,39 @@ export function PositionScanner({ address }: PositionScannerProps) {
     setCreating(false);
   }
 
-  // Protect position (simulated — in production calls router)
+  // Protect position — user signs on Base Sepolia, backend broadcasts on Unichain
   async function handleProtect() {
+    if (!walletClient) return;
     setProtecting(true);
-    // Simulate protection transaction
-    await new Promise((r) => setTimeout(r, 2000));
-    setProtectTxHash("0x" + Math.random().toString(16).slice(2, 66));
+    try {
+      // Get user to sign a message authorizing protection
+      const message = `LiquidShield: Protect my Aave V3 position on Base Sepolia.\nAddress: ${address}\nTimestamp: ${Date.now()}`;
+      const signature = await walletClient.signMessage({ message });
+
+      // Send to backend — backend broadcasts registerAndPayPremium on Unichain
+      const res = await fetch(`${API_URL}/protect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userAddress: address,
+          signature,
+          message,
+          sourceChainId: 84532,
+          strategy: 1, // BATCHED_UNWIND
+          healthThreshold: "1500000000000000000",
+        }),
+      });
+
+      const result = await res.json();
+      if (result.txHash) {
+        setProtectTxHash(result.txHash);
+        setPremiumPaid(true);
+      } else {
+        console.error("Protection failed:", result.error);
+      }
+    } catch (err) {
+      console.error("Failed to protect:", err);
+    }
     setProtecting(false);
   }
 
@@ -152,12 +181,9 @@ export function PositionScanner({ address }: PositionScannerProps) {
               <p className="text-sm text-white/50">Scanning for lending positions on Base Sepolia...</p>
             </div>
           ) : position && position.hasPosition ? (
-            /* Position found */
             <div className="border border-white/[0.08]">
               <div className="p-6 border-b border-white/[0.06] flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.2em] text-white/35">
-                  Detected Position
-                </p>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Detected Position</p>
                 <span className="text-xs text-white/25 border border-white/[0.08] px-2 py-0.5">
                   Aave V3 &middot; Base Sepolia
                 </span>
@@ -186,20 +212,24 @@ export function PositionScanner({ address }: PositionScannerProps) {
                 <div>
                   <p className="text-sm text-white/50">
                     Premium: <span className="text-white/80 font-semibold">10 mUSDC / month</span>
-                    <span className="text-white/25 ml-2">(60% to reserve, 40% to LPs)</span>
+                    <span className="text-white/25 ml-2">(60% reserve, 40% LPs)</span>
                   </p>
+                  {premiumPaid && (
+                    <p className="text-xs text-green-400/60 mt-1">Premium paid. Position is being monitored by Reactive Network.</p>
+                  )}
                 </div>
                 {protectTxHash ? (
                   <div className="text-right">
                     <p className="text-xs text-green-400/80 font-semibold mb-1">Protected</p>
                     <a
-                      href={`https://base-sepolia.blockscout.com/tx/${protectTxHash}`}
+                      href={`${UNICHAIN_EXPLORER}/tx/${protectTxHash}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-xs text-white/25 hover:text-white/50 font-mono"
                     >
-                      {protectTxHash.slice(0, 10)}...
+                      {protectTxHash.slice(0, 14)}...
                     </a>
+                    <p className="text-[10px] text-white/15 mt-1">Registered on Unichain Sepolia</p>
                   </div>
                 ) : (
                   <button
@@ -215,19 +245,17 @@ export function PositionScanner({ address }: PositionScannerProps) {
               </div>
             </div>
           ) : (
-            /* No position — offer to create one */
             <div className="border border-white/[0.08] p-8 text-center">
               <p className="text-lg font-bold text-white mb-2">No Aave position detected</p>
               <p className="text-sm text-white/50 mb-6 max-w-md mx-auto">
-                You don&apos;t have an active lending position on Aave V3 (Base Sepolia).
-                Create one to see LiquidShield in action.
+                Create a lending position on Aave V3 (Base Sepolia) to see LiquidShield in action.
               </p>
 
               {createTxHash ? (
                 <div>
                   <p className="text-xs text-green-400/80 font-semibold mb-2">Position created!</p>
                   <a
-                    href={`https://base-sepolia.blockscout.com/tx/${createTxHash}`}
+                    href={`${BASE_EXPLORER}/tx/${createTxHash}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-white/25 hover:text-white/50 font-mono"
@@ -249,7 +277,7 @@ export function PositionScanner({ address }: PositionScannerProps) {
             </div>
           )}
 
-          {/* LP sidebar */}
+          {/* LP yield bar */}
           <div className="mt-4 border border-white/[0.08] p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-6">
               {["Swap fees", "Premium yield (40%)", "Defense fees (1.5%)"].map((item) => (
