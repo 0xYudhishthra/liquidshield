@@ -412,6 +412,7 @@ contract LiquidShieldHook is IHooks, Aqua0BaseHook, IUnlockCallback {
 
         ProtectedPosition storage pos = positions[positionId];
         if (pos.owner == address(0)) revert Errors.PositionNotFound();
+        if (pos.status == PositionStatus.DEFENDING) revert Errors.PositionCurrentlyDefending();
         if (pos.premiumPaidUntil < block.timestamp) revert Errors.PremiumExpired();
 
         // Effects: update status and reserve
