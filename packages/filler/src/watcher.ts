@@ -1,25 +1,16 @@
-import { createPublicClient, http, parseAbiItem, decodeFunctionData } from "viem";
+import { createPublicClient, http, parseAbiItem, parseAbi } from "viem";
 import { CHAIN_CONFIG } from "./config/chains";
 import { EventEmitter } from "events";
 
-// Settler ABI for decoding the open() function call
-const settlerAbi = [
-  {
-    type: "function",
-    name: "open",
-    inputs: [
-      { name: "positionId", type: "bytes32" },
-      { name: "collateralAsset", type: "address" },
-      { name: "amount", type: "uint256" },
-      { name: "sourceChainId", type: "uint256" },
-      { name: "lendingAdapter", type: "address" },
-      { name: "strategy", type: "uint8" },
-      { name: "user", type: "address" },
-    ],
-    outputs: [{ name: "orderId", type: "bytes32" }],
-    stateMutability: "nonpayable",
-  },
-] as const;
+// Hook ABI for reading position data
+const hookAbi = parseAbi([
+  "function getPosition(bytes32) view returns (address owner, address collateralAsset, address debtAsset, address lendingAdapter, uint256 positionSize, uint256 healthThreshold, uint256 sourceChainId, uint256 premiumPaidUntil, uint8 strategy, uint8 status)",
+]);
+
+// DefenseTriggered event from the hook — carries the actual intent data
+const defenseTriggeredAbi = parseAbi([
+  "event DefenseTriggered(bytes32 indexed positionId, uint8 strategy, uint256 defenseAmount)",
+]);
 
 export interface DefenseIntent {
   orderId: string;
@@ -41,9 +32,10 @@ export function createWatcher() {
   async function start() {
     console.log(`Watching for intents on Unichain at ${CHAIN_CONFIG.unichain.settlerAddress}`);
 
-    // Initialize lastProcessedBlock to current block to avoid replaying old events
+    // Start from a few blocks back to catch recent events (configurable via env)
     const currentBlock = await client.getBlockNumber();
-    lastProcessedBlock = currentBlock;
+    const lookback = BigInt(process.env.FILLER_LOOKBACK_BLOCKS || "0");
+    lastProcessedBlock = currentBlock - lookback;
     console.log(`Starting from block ${lastProcessedBlock}`);
 
     setInterval(async () => {
@@ -63,34 +55,55 @@ export function createWatcher() {
         for (const log of logs) {
           try {
             const orderId = log.topics[1];
+            const userAddr = log.topics[2];
             if (!orderId || !log.transactionHash) {
               console.warn("Skipping log with missing orderId or txHash");
               continue;
             }
 
-            // Fetch the transaction to decode the open() call parameters
-            const tx = await client.getTransaction({ hash: log.transactionHash });
-            const { args } = decodeFunctionData({
-              abi: settlerAbi,
-              data: tx.input,
+            // Get the DefenseTriggered event from the same tx to find positionId + amount
+            const receipt = await client.getTransactionReceipt({ hash: log.transactionHash });
+            const defenseTriggerTopic = "0xeb2ba87705996bff367bfa3aef22af25c28b1208d88bf96c23ceec8261c4a13f"; // DefenseTriggered
+            const defenseLog = receipt.logs.find((l: any) => l.topics[0] === defenseTriggerTopic);
+
+            if (!defenseLog) {
+              console.warn(`No DefenseTriggered event found in tx ${log.transactionHash}`);
+              continue;
+            }
+
+            const positionId = defenseLog.topics[1] as string;
+
+            // Read position data from the hook contract
+            const hookAddress = CHAIN_CONFIG.unichain.hookAddress as `0x${string}`;
+            const posData = await client.readContract({
+              address: hookAddress,
+              abi: hookAbi,
+              functionName: "getPosition",
+              args: [positionId as `0x${string}`],
             });
 
-            const [positionId, collateralAsset, amount, sourceChainId, lendingAdapter, strategy, user] = args;
+            const [owner, collateralAsset, , lendingAdapter, positionSize, , sourceChainId, , strategy] = posData;
+
+            // Decode defenseAmount from DefenseTriggered event data
+            // DefenseTriggered(bytes32 indexed positionId, uint8 strategy, uint256 defenseAmount)
+            // data = abi.encode(uint8 strategy, uint256 defenseAmount)
+            // strategy is at bytes 0-31, defenseAmount at bytes 32-63
+            const defenseAmount = BigInt("0x" + defenseLog.data.slice(66, 130));
 
             const intent: DefenseIntent = {
               orderId,
               positionId,
               collateralAsset,
-              amount,
+              amount: defenseAmount,
               sourceChainId: Number(sourceChainId),
               lendingAdapter,
-              strategy,
-              user,
+              strategy: Number(strategy),
+              user: owner,
               timestamp: Date.now(),
             };
 
             console.log(
-              `Decoded intent: orderId=${orderId}, position=${positionId}, chain=${intent.sourceChainId}, amount=${amount}, strategy=${strategy}`
+              `Decoded intent: orderId=${orderId}, position=${positionId.slice(0, 16)}..., chain=${intent.sourceChainId}, amount=${defenseAmount}, strategy=${intent.strategy}`
             );
             emitter.emit("newIntent", intent);
           } catch (decodeError) {
