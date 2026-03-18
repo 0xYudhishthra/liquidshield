@@ -1,0 +1,8 @@
+{
+  "chainId": 5318007,
+  "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
+  "positionMonitor": "0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67",
+  "callbackReceiver": "0x645d483fa6882B5f40e6c3d5B5bf9708DECe92f5",
+  "targetChainId": 1301,
+  "callbackProxy": "0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4"
+}
