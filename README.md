@@ -246,14 +246,14 @@ sequenceDiagram
 
 | Contract | Network | Address |
 |---|---|---|
-| `LiquidShieldHook` | Unichain Sepolia | `0x7180B7B8866b8836bbDEAE95919080BCbC9295c0` |
-| `LiquidShieldRouter` | Unichain Sepolia | `0x222A076aDce572254101c6749071Bb1bAd4Fc703` |
-| `LiquidShieldSettler` | Unichain Sepolia | `0x7DA32F04FBcA5A0485225BA664326dD4ff4b9174` |
-| `DefenseCallback` | Unichain Sepolia | `0x380B71724629aB7f9d88cb0c9f591c5565500161` |
-| `HealthChecker` | Base Sepolia | `0x86cD714b0ad55E757C0204950DfC38d0959246FB` |
-| `DefenseExecutor` | Base Sepolia | `0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030` |
-| `AaveV3Adapter` | Base Sepolia | `0x9A2F9F1D3c4FeEa4bd2fcc8E4e0F494F24E2b3b5` |
-| `PositionMonitor` (RSC) | Reactive Lasna | `0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030` |
+| `LiquidShieldHook` | Unichain Sepolia | `0xE1709bE1DaAa35dBdF80F30b09B103FbaF6d95c0` |
+| `LiquidShieldRouter` | Unichain Sepolia | `0x17E0a8420c4643A084A8f14384798C381FF8C43E` |
+| `LiquidShieldSettler` | Unichain Sepolia | `0xAf13Ecf6FC53c6eC8b577c968A6D1261681B16a8` |
+| `DefenseCallback` | Unichain Sepolia | `0xa83c265635257060EfE753b19467844d10c15F48` |
+| `HealthChecker` | Base Sepolia | `0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038` |
+| `DefenseExecutor` | Base Sepolia | `0x4459b385544c752922940ba87e86c6DbA8f4CDEF` |
+| `AaveV3Adapter` | Base Sepolia | `0x560010aEA084A62B3e666f7e48A190A299049129` |
+| `PositionMonitor` (RSC) | Reactive Lasna | `0x9A2F9F1D3c4FeEa4bd2fcc8E4e0F494F24E2b3b5` |
 
 > **Demo scope:** The system actively monitors a real Aave V3 position on Base Sepolia (WETH collateral, USDC debt, HF ~1.22). The RSC's CRON triggers the HealthChecker every ~10 blocks, which reads the health factor on-chain from Aave. When HF < 1.5, the HealthDanger event triggers defense on Unichain — ERC-6909 extraction, ERC-7683 intent emission via batched unwind strategy.
 

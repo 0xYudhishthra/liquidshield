@@ -151,59 +151,77 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
 
     receive() external payable {}
 
+    // ─── Internal Auth Helper ────────────────────────────────────────────────
+
+    function _checkHookOrOwner(address owner) internal view {
+        if (msg.sender != owner) {
+            bool isValid = false;
+            try IAqua0BaseHookMarker(msg.sender).supportsInterface(type(IAqua0BaseHookMarker).interfaceId) returns (bool result) {
+                isValid = result;
+            } catch {
+                isValid = false;
+            }
+            if (!isValid) revert InvalidHookInterface();
+        }
+    }
+
     // ─── User: Deposit / Withdraw ─────────────────────────────────────────────
 
-    function deposit(address token, uint256 amount) external nonReentrant {
+    function deposit(address token, uint256 amount, address to) external nonReentrant {
         if (token == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        freeBalance[msg.sender][token] += amount;
+        freeBalance[to][token] += amount;
 
-        emit Deposited(msg.sender, token, amount);
+        emit Deposited(to, token, amount);
     }
 
     /// @notice Deposit native ETH into the shared pool.
-    function depositNative() external payable nonReentrant {
+    function depositNative(address to) external payable nonReentrant {
         if (msg.value == 0) revert ZeroAmount();
 
-        freeBalance[msg.sender][address(0)] += msg.value;
+        freeBalance[to][address(0)] += msg.value;
 
-        emit Deposited(msg.sender, address(0), msg.value);
+        emit Deposited(to, address(0), msg.value);
     }
 
-    function withdraw(address token, uint256 amount) external nonReentrant {
+    function withdraw(address token, uint256 amount, address from, address to) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
-        if (freeBalance[msg.sender][token] < amount)
+        _checkHookOrOwner(from);
+
+        if (freeBalance[from][token] < amount)
             revert InsufficientFreeBalance();
 
-        freeBalance[msg.sender][token] -= amount;
+        freeBalance[from][token] -= amount;
 
         if (token == address(0)) {
-            (bool success, ) = msg.sender.call{value: amount}("");
+            (bool success, ) = to.call{value: amount}("");
             if (!success) revert TransferFailed();
         } else {
-            IERC20(token).safeTransfer(msg.sender, amount);
+            IERC20(token).safeTransfer(to, amount);
         }
 
-        emit Withdrawn(msg.sender, token, amount);
+        emit Withdrawn(from, token, amount);
     }
 
     /// @notice Claim accumulated fees for a specific token
-    function claimFees(address token) external nonReentrant {
-        uint256 amount = earnedFees[msg.sender][token];
+    function claimFees(address token, address from, address to) external nonReentrant {
+        _checkHookOrOwner(from);
+        
+        uint256 amount = earnedFees[from][token];
         if (amount == 0) revert ZeroAmount();
 
-        earnedFees[msg.sender][token] = 0;
+        earnedFees[from][token] = 0;
 
         if (token == address(0)) {
-            (bool success, ) = msg.sender.call{value: amount}("");
+            (bool success, ) = to.call{value: amount}("");
             if (!success) revert TransferFailed();
         } else {
-            IERC20(token).safeTransfer(msg.sender, amount);
+            IERC20(token).safeTransfer(to, amount);
         }
 
-        emit FeesClaimed(msg.sender, token, amount);
+        emit FeesClaimed(from, token, amount);
     }
 
     // ─── User: Positions ─────────────────────────────────────────────────────
@@ -225,8 +243,11 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         int24 tickUpper,
         uint128 liquidity,
         uint256 token0Amount,
-        uint256 token1Amount
+        uint256 token1Amount,
+        address owner
     ) external nonReentrant returns (bytes32 positionId) {
+        _checkHookOrOwner(owner);
+
         if (tickLower >= tickUpper) revert InvalidTicks();
         if (liquidity == 0) revert ZeroAmount();
 
@@ -235,22 +256,22 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
 
         // Check but DO NOT lock free balances (true liquidity amplification)
         if (token0Amount > 0) {
-            if (freeBalance[msg.sender][token0] < token0Amount)
+            if (freeBalance[owner][token0] < token0Amount)
                 revert InsufficientFreeBalance();
         }
         if (token1Amount > 0) {
-            if (freeBalance[msg.sender][token1] < token1Amount)
+            if (freeBalance[owner][token1] < token1Amount)
                 revert InsufficientFreeBalance();
         }
 
         PoolId poolId = key.toId();
-        positionId = _positionId(msg.sender, poolId, tickLower, tickUpper);
+        positionId = _positionId(owner, poolId, tickLower, tickUpper);
 
-        if (userPositions[msg.sender][positionId].active)
+        if (userPositions[owner][positionId].active)
             revert PositionAlreadyExists();
 
         // Store user position
-        userPositions[msg.sender][positionId] = UserPosition({
+        userPositions[owner][positionId] = UserPosition({
             poolId: poolId,
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -259,7 +280,7 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
             token1Initial: token1Amount,
             active: true
         });
-        _userPositionIds[msg.sender].push(positionId);
+        _userPositionIds[owner].push(positionId);
 
         // Update aggregated range
         bytes32 rangeKey = _rangeKey(tickLower, tickUpper);
@@ -279,17 +300,17 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         bool foundUser = false;
         address[] memory users = rangeUsers[poolId][rangeKey];
         for (uint256 i = 0; i < users.length; i++) {
-            if (users[i] == msg.sender) {
+            if (users[i] == owner) {
                 foundUser = true;
                 break;
             }
         }
         if (!foundUser) {
-            rangeUsers[poolId][rangeKey].push(msg.sender);
+            rangeUsers[poolId][rangeKey].push(owner);
         }
 
         emit PositionAdded(
-            msg.sender,
+            owner,
             positionId,
             poolId,
             tickLower,
@@ -305,17 +326,20 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     function removePosition(
         PoolKey calldata key,
         int24 tickLower,
-        int24 tickUpper
+        int24 tickUpper,
+        address owner
     ) external nonReentrant {
+        _checkHookOrOwner(owner);
+
         PoolId poolId = key.toId();
         bytes32 positionId = _positionId(
-            msg.sender,
+            owner,
             poolId,
             tickLower,
             tickUpper
         );
 
-        UserPosition storage pos = userPositions[msg.sender][positionId];
+        UserPosition storage pos = userPositions[owner][positionId];
         if (!pos.active) revert PositionNotFound();
 
         uint128 liquidity = pos.liquidityShares;
@@ -332,7 +356,7 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         bytes32 rangeKey = _rangeKey(tickLower, tickUpper);
         aggregatedRanges[poolId][rangeKey].totalLiquidity -= liquidity;
 
-        emit PositionRemoved(msg.sender, positionId, poolId);
+        emit PositionRemoved(owner, positionId, poolId);
     }
 
     // ─── Hook: Aggregation + Settlement ──────────────────────────────────────
