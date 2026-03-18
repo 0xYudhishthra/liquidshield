@@ -246,16 +246,16 @@ sequenceDiagram
 
 | Contract | Network | Address |
 |---|---|---|
-| `LiquidShieldHook` | Unichain Sepolia | `0x008E3fDE34a243F1aa18CC0f381040063eCC95C0` |
-| `LiquidShieldRouter` | Unichain Sepolia | `0xdf9aE57790c9c26AD5f0D986267216d9E8d8Cc9E` |
-| `LiquidShieldSettler` | Unichain Sepolia | `0xF540054007966371d338D337d73A08A34649aB76` |
-| `DefenseCallback` | Unichain Sepolia | `0xE66196fEaa93518E3aC875414dcAb3d722Cb58A0` |
-| `HealthChecker` | Base Sepolia | `0x605f5EeAC9C253f55F6af3DB56a9071D250BEEE0` |
-| `DefenseExecutor` | Base Sepolia | `0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67` |
-| `AaveV3Adapter` | Base Sepolia | `0x1eB7638CAa7053833Ad9cd7E8276f3E3574AD106` |
-| `PositionMonitor` (RSC) | Reactive Lasna | `0xf82Af884A2cbeF51D08313Ae9E23Bb4Caf6F1966` |
+| `LiquidShieldHook` | Unichain Sepolia | `0x7180B7B8866b8836bbDEAE95919080BCbC9295c0` |
+| `LiquidShieldRouter` | Unichain Sepolia | `0x222A076aDce572254101c6749071Bb1bAd4Fc703` |
+| `LiquidShieldSettler` | Unichain Sepolia | `0x7DA32F04FBcA5A0485225BA664326dD4ff4b9174` |
+| `DefenseCallback` | Unichain Sepolia | `0x380B71724629aB7f9d88cb0c9f591c5565500161` |
+| `HealthChecker` | Base Sepolia | `0x86cD714b0ad55E757C0204950DfC38d0959246FB` |
+| `DefenseExecutor` | Base Sepolia | `0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030` |
+| `AaveV3Adapter` | Base Sepolia | `0x9A2F9F1D3c4FeEa4bd2fcc8E4e0F494F24E2b3b5` |
+| `PositionMonitor` (RSC) | Reactive Lasna | `0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030` |
 
-> **Demo scope:** The system actively monitors a real Aave V3 position on Base Sepolia (0.3 WETH collateral, ~$479 USDC debt, HF ~1.23). The RSC's CRON triggers the HealthChecker every ~10 blocks, which reads the health factor on-chain from Aave. When HF < 1.5, the HealthDanger event triggers defense on Unichain — ERC-6909 extraction, ERC-7683 intent emission, and filler settlement.
+> **Demo scope:** The system actively monitors a real Aave V3 position on Base Sepolia (WETH collateral, USDC debt, HF ~1.22). The RSC's CRON triggers the HealthChecker every ~10 blocks, which reads the health factor on-chain from Aave. When HF < 1.5, the HealthDanger event triggers defense on Unichain — ERC-6909 extraction, ERC-7683 intent emission via batched unwind strategy.
 
 ---
 

@@ -1,12 +1,8 @@
 {
   "chainId": 84532,
   "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
-  "defenseExecutor": "0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67",
-  "aaveV3Adapter": "0x1eB7638CAa7053833Ad9cd7E8276f3E3574AD106",
-  "aavePool": "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
-  "aavePosition": {
-    "collateral": "0.3 WETH",
-    "debt": "~299 USDC",
-    "healthFactor": "1.97"
-  }
+  "defenseExecutor": "0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030",
+  "aaveV3Adapter": "0x9A2F9F1D3c4FeEa4bd2fcc8E4e0F494F24E2b3b5",
+  "healthChecker": "0x86cD714b0ad55E757C0204950DfC38d0959246FB",
+  "aavePool": "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27"
 }

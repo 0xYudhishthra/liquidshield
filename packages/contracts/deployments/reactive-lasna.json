@@ -1,8 +1,11 @@
 {
   "chainId": 5318007,
   "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
-  "positionMonitor": "0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67",
-  "callbackReceiver": "0x645d483fa6882B5f40e6c3d5B5bf9708DECe92f5",
-  "targetChainId": 1301,
-  "callbackProxy": "0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4"
+  "positionMonitor": "0x8EBfe6dCb2D2a5649756E6cB9b1439bf2407B030",
+  "healthChecker": "0x86cD714b0ad55E757C0204950DfC38d0959246FB",
+  "defenseCallback": "0x380B71724629aB7f9d88cb0c9f591c5565500161",
+  "callbackProxyUnichain": "0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4",
+  "callbackProxyBaseSepolia": "0xa6eA49Ed671B8a4dfCDd34E36b7a75Ac79B8A5a6",
+  "cronTopic": "0x04463f7c1651e6b9774d7f85c85bb94654e3c46ca79b0c16fb16d4183307b687",
+  "positionId": "0x60205feb35f725596a6336a1e09485a080949758896c2d7521b6aac49cdfff09"
 }
