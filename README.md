@@ -121,6 +121,17 @@ Hook periodically calls `poolManager.donate()` to distribute accumulated premium
 
 ---
 
+## Shared Liquidity Layer (Aqua0)
+
+LiquidShield's hook inherits from `Aqua0BaseHook` — a shared liquidity layer we built that enables JIT (Just-In-Time) liquidity amplification. The same capital pool that backs defense reserves also serves as amplified LP liquidity during swaps.
+
+| File | Description |
+|---|---|
+| [`packages/contracts/src/aqua0/Aqua0BaseHook.sol`](./packages/contracts/src/aqua0/Aqua0BaseHook.sol) | Base hook — `_addVirtualLiquidity()` in beforeSwap, `_removeVirtualLiquidity()` + `_settleVirtualLiquidityDeltas()` in afterSwap |
+| [`packages/contracts/src/aqua0/SharedLiquidityPool.sol`](./packages/contracts/src/aqua0/SharedLiquidityPool.sol) | Shared capital pool — holds user deposits, tracks per-user PnL with exact fee isolation, settles swap deltas |
+
+---
+
 ## Defense Strategies
 
 | Strategy | Adapter | When Used | How It Works |
@@ -193,16 +204,6 @@ sequenceDiagram
 | [`packages/contracts/test/LiquidShieldSettler.t.sol`](./packages/contracts/test/LiquidShieldSettler.t.sol) | 16 tests: order creation, nonce tracking, settlement, authorization |
 | [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Intent watcher — monitors `OrderOpened` events, decodes intent data |
 | [`packages/filler/src/executor.ts`](./packages/filler/src/executor.ts) | Filler executor — dispatches to strategy, fills on source chain |
-
-### Aqua0 Shared Liquidity (JIT Liquidity Amplification)
-
-LiquidShield inherits from Aqua0's `Aqua0BaseHook` to gain JIT shared liquidity — the same capital that backs defense reserves also serves as amplified LP liquidity during swaps.
-
-| File | Description |
-|---|---|
-| [`packages/contracts/src/aqua0/Aqua0BaseHook.sol`](./packages/contracts/src/aqua0/Aqua0BaseHook.sol) | Base hook with `_addVirtualLiquidity()`, `_removeVirtualLiquidity()`, `_settleVirtualLiquidityDeltas()` — injected in beforeSwap/afterSwap |
-| [`packages/contracts/src/aqua0/SharedLiquidityPool.sol`](./packages/contracts/src/aqua0/SharedLiquidityPool.sol) | Shared capital pool — holds user deposits, tracks per-user PnL, settles swap deltas with the hook |
-| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Inherits `Aqua0BaseHook` — `beforeSwap()` calls `_addVirtualLiquidity()`, `afterSwap()` calls `_removeVirtualLiquidity()` + `_settleVirtualLiquidityDeltas()` |
 
 ### Defense Executor & Lending Adapters
 
