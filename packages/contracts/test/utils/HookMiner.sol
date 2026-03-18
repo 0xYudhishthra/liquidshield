@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
 library HookMiner {
     function find(address deployer, uint160 flags, bytes memory creationCode, bytes memory constructorArgs) internal pure returns (address, bytes32) {

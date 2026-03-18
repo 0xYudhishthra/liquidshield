@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
 import "forge-std/Script.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -66,10 +66,10 @@ contract DeployHook is Script {
         require(address(hook) == hookAddress, "CREATE2 address mismatch");
         console.log("Hook deployed:", address(hook));
 
-        // Set hook on SharedLiquidityPool
-        if (sharedPoolAddr == address(0)) {
-            sharedPool.setHook(address(hook));
-        }
+        // Register hook on SharedLiquidityPool (permissionless via ERC165)
+        (bool regSuccess,) = sharedPoolAddr.call(abi.encodeWithSignature("registerHook(address)", address(hook)));
+        require(regSuccess, "registerHook failed");
+        console.log("Hook registered on SharedLiquidityPool");
 
         // Deploy Settler and Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));

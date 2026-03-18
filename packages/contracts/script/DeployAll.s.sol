@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.26;
 
 import "forge-std/Script.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -23,26 +23,17 @@ contract DeployAll is Script {
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        address sharedPoolAddr = vm.envOr("SHARED_LIQUIDITY_POOL", address(0));
+        address sharedPoolAddr = vm.envAddress("SHARED_LIQUIDITY_POOL");
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Phase 0: Deploy SharedLiquidityPool if not provided or if we can't setHook
-        if (sharedPoolAddr == address(0)) {
-            SharedLiquidityPool newPool = new SharedLiquidityPool(deployer);
-            sharedPoolAddr = address(newPool);
-            console.log("SharedLiquidityPool deployed:", sharedPoolAddr);
-        }
-
         // Phase 1-2: Deploy Hook via CREATE2
         LiquidShieldHook hook = _deployHook(deployer, sharedPoolAddr);
-
-        // Phase 2b: Register hook on SharedLiquidityPool (only if we're the owner)
-        try SharedLiquidityPool(payable(sharedPoolAddr)).setHook(address(hook)) {
-            console.log("Hook registered on SharedLiquidityPool");
-        } catch {
-            console.log("WARNING: Could not setHook - not the owner. Ask the pool owner to call setHook(", vm.toString(address(hook)), ")");
-        }
+        // Register hook on SharedLiquidityPool (permissionless via ERC165)
+        // Call registerHook directly since our local copy may not have this function
+        (bool regSuccess,) = sharedPoolAddr.call(abi.encodeWithSignature("registerHook(address)", address(hook)));
+        require(regSuccess, "registerHook failed");
+        console.log("Hook registered on SharedLiquidityPool");
 
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));
