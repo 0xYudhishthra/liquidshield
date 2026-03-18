@@ -133,10 +133,10 @@ contract LiquidShieldHook is IHooks, Aqua0BaseHook, IUnlockCallback {
     /// @notice Deploys the LiquidShield hook
     /// @param _poolManager Uniswap v4 PoolManager address
     /// @param _sharedPool Aqua0 SharedLiquidityPool address
-    constructor(IPoolManager _poolManager, SharedLiquidityPool _sharedPool)
+    constructor(IPoolManager _poolManager, SharedLiquidityPool _sharedPool, address _owner)
         Aqua0BaseHook(_poolManager, _sharedPool)
     {
-        owner = msg.sender;
+        owner = _owner;
     }
 
     /// @notice Accept ETH for Aqua0 delta settlement

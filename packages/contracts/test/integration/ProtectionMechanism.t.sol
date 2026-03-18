@@ -65,7 +65,7 @@ contract ProtectionMechanismTest is Test, Deployers {
         address hookAddr = address(hookFlags);
         deployCodeTo(
             "LiquidShieldHook.sol:LiquidShieldHook",
-            abi.encode(address(manager), address(sharedPool)),
+            abi.encode(address(manager), address(sharedPool), address(this)),
             hookAddr
         );
         hook = LiquidShieldHook(payable(hookAddr));

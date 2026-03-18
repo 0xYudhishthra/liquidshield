@@ -12,13 +12,31 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LiquidShieldHook} from "../src/hooks/LiquidShieldHook.sol";
 import {LiquidShieldRouter} from "../src/router/LiquidShieldRouter.sol";
 import {LiquidShieldSettler} from "../src/settler/LiquidShieldSettler.sol";
-import {SharedLiquidityPool} from "../src/aqua0/SharedLiquidityPool.sol";
 
-/// @notice Single deployment script for all Unichain contracts: Hook + Settler + Router + Pool + Config + Seed
+/// @notice CREATE2 factory deployed inline for hook address salt mining
+contract SimpleCreate2Factory {
+    function deploy(bytes32 salt, bytes memory initCode) external returns (address hook) {
+        assembly {
+            hook := create2(0, add(initCode, 0x20), mload(initCode), salt)
+        }
+        require(hook != address(0), "CREATE2 failed");
+    }
+}
+
+/// @notice Single deployment script for all Unichain contracts
 /// @dev Usage: forge script script/DeployAll.s.sol --broadcast --rpc-url unichain_sepolia
 contract DeployAll is Script {
-    // Aqua0's PoolManager on Unichain Sepolia (from contracts-hookathon deployments)
+    // Aqua0's PoolManager on Unichain Sepolia
     address constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
+
+    // Hook permission flags
+    uint160 constant HOOK_FLAGS = uint160(
+        Hooks.AFTER_INITIALIZE_FLAG
+            | Hooks.AFTER_ADD_LIQUIDITY_FLAG
+            | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
+            | Hooks.BEFORE_SWAP_FLAG
+            | Hooks.AFTER_SWAP_FLAG
+    );
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -27,11 +45,12 @@ contract DeployAll is Script {
 
         vm.startBroadcast(deployerPrivateKey);
 
-        // Phase 1-2: Deploy Hook via CREATE2
-        LiquidShieldHook hook = _deployHook(deployer, sharedPoolAddr);
-        // No registration needed - SharedLiquidityPool's onlyHook modifier
-        // checks ERC165 supportsInterface on msg.sender dynamically
-        console.log("Hook implements IAqua0BaseHookMarker - permissionless access to SharedLiquidityPool");
+        // Phase 1: Deploy CREATE2 factory
+        SimpleCreate2Factory factory = new SimpleCreate2Factory();
+        console.log("CREATE2 factory:", address(factory));
+
+        // Phase 2: Mine salt and deploy hook via factory
+        LiquidShieldHook hook = _deployHook(address(factory), sharedPoolAddr);
 
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));
@@ -47,7 +66,7 @@ contract DeployAll is Script {
         // Phase 5: Configure
         _configure(hook, settler);
 
-        // Phase 6: Seed reserve
+        // Phase 6: Seed reserve (optional)
         _seedReserve(hook);
 
         vm.stopBroadcast();
@@ -63,37 +82,34 @@ contract DeployAll is Script {
         console.log(string.concat("NEXT_PUBLIC_SETTLER_ADDRESS=", vm.toString(address(settler))));
     }
 
-    function _deployHook(address deployer, address sharedPoolAddr) internal returns (LiquidShieldHook hook) {
+    function _deployHook(address factoryAddr, address sharedPoolAddr) internal returns (LiquidShieldHook hook) {
         console.log("SharedLiquidityPool (existing):", sharedPoolAddr);
 
-        uint160 hookFlags = uint160(
-            Hooks.AFTER_INITIALIZE_FLAG
-                | Hooks.AFTER_ADD_LIQUIDITY_FLAG
-                | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
-                | Hooks.BEFORE_SWAP_FLAG
-                | Hooks.AFTER_SWAP_FLAG
-        );
-
+        // Pass the deployer EOA as owner (3rd constructor arg)
+        address deployer = msg.sender;
         bytes memory initCode = abi.encodePacked(
             type(LiquidShieldHook).creationCode,
-            abi.encode(POOL_MANAGER, sharedPoolAddr)
+            abi.encode(POOL_MANAGER, sharedPoolAddr, deployer)
         );
         bytes32 initCodeHash = keccak256(initCode);
 
+        // Mine salt using the factory address as the CREATE2 deployer
         address hookAddress;
         bytes32 salt;
-        for (uint256 i = 0; i < 100000; i++) {
+        for (uint256 i = 0; i < 200000; i++) {
             salt = bytes32(i);
-            hookAddress = _computeCreate2Address(deployer, salt, initCodeHash);
-            if (uint160(hookAddress) & hookFlags == hookFlags) break;
-            if (i == 99999) revert("Could not find valid salt in 100000 iterations");
+            hookAddress = _computeCreate2Address(factoryAddr, salt, initCodeHash);
+            // V4 checks lower 14 bits exactly match declared permissions
+            if ((uint160(hookAddress) & 0x3FFF) == HOOK_FLAGS) break;
+            if (i == 199999) revert("Could not find valid salt in 200000 iterations");
         }
         console.log("Found salt:", vm.toString(salt));
+        console.log("Expected hook address:", hookAddress);
 
-        assembly {
-            hook := create2(0, add(initCode, 0x20), mload(initCode), salt)
-        }
-        require(address(hook) == hookAddress, "CREATE2 address mismatch");
+        // Deploy via factory
+        address deployed = SimpleCreate2Factory(factoryAddr).deploy(salt, initCode);
+        require(deployed == hookAddress, "CREATE2 address mismatch");
+        hook = LiquidShieldHook(payable(deployed));
         console.log("Hook deployed:", address(hook));
     }
 
