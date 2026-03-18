@@ -3,24 +3,16 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {PositionMonitor} from "../src/rsc/PositionMonitor.sol";
-import {Errors} from "../src/lib/Errors.sol";
+import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
 import {Events} from "../src/lib/Events.sol";
 
-/// @notice Mock deployed at the REACTIVE_CALLBACK address to capture subscribe() and callback calls
-contract MockReactiveCallback {
-    // Track subscribe calls
+/// @notice Mock deployed at the SERVICE_ADDR to capture subscribe() calls
+contract MockSystemContract {
     uint256 public lastSubscribeChainId;
     address public lastSubscribeContract;
     uint256 public lastSubscribeTopic0;
     uint256 public subscribeCallCount;
 
-    // Track callback calls (from react → REACTIVE_CALLBACK.call)
-    uint256 public lastCallbackChainId;
-    address public lastCallbackTarget;
-    bytes public lastCallbackPayload;
-    uint256 public callbackCallCount;
-
-    /// @dev Matches ISubscriptionService.subscribe
     function subscribe(
         uint256 chain_id, address _contract,
         uint256 topic_0, uint256, uint256, uint256
@@ -31,93 +23,95 @@ contract MockReactiveCallback {
         subscribeCallCount++;
     }
 
-    /// @dev Fallback to capture the callback call from react()
-    fallback(bytes calldata data) external returns (bytes memory) {
-        // The react() function encodes: abi.encode(unichainChainId, liquidShieldHook, payload)
-        if (data.length > 0) {
-            (uint256 chainId, address target, bytes memory payload) = abi.decode(data, (uint256, address, bytes));
-            lastCallbackChainId = chainId;
-            lastCallbackTarget = target;
-            lastCallbackPayload = payload;
-            callbackCallCount++;
-        }
-        return abi.encode(true);
-    }
+    // Needed for AbstractPayer (debt check, pay)
+    function debt(address) external pure returns (uint256) { return 0; }
+
+    receive() external payable {}
+    fallback() external payable {}
 }
 
 contract PositionMonitorTest is Test {
     PositionMonitor public monitor;
-    MockReactiveCallback public mockReactive;
+    MockSystemContract public mockService;
 
-    address public hookAddr = makeAddr("hook");
+    address public callbackReceiver = makeAddr("callbackReceiver");
     address public ownerAddr;
     address public user = makeAddr("user");
     address public attacker = makeAddr("attacker");
     address public lendingProtocol = makeAddr("aavePool");
 
     uint256 public constant UNICHAIN_CHAIN_ID = 1301;
-    address public constant REACTIVE_CALLBACK = 0x0000000000000000000000000000000000fffFfF;
+    address public constant SERVICE_ADDR = 0x0000000000000000000000000000000000fffFfF;
 
     function setUp() public {
         ownerAddr = address(this);
 
-        // Deploy mock at the REACTIVE_CALLBACK address
-        mockReactive = new MockReactiveCallback();
-        vm.etch(REACTIVE_CALLBACK, address(mockReactive).code);
+        // Deploy mock at the SERVICE_ADDR so AbstractReactive's constructor works
+        mockService = new MockSystemContract();
+        vm.etch(SERVICE_ADDR, address(mockService).code);
 
-        // Deploy PositionMonitor
-        monitor = new PositionMonitor(hookAddr, UNICHAIN_CHAIN_ID);
+        // Deploy PositionMonitor (on Reactive Network — SERVICE_ADDR has code, so vm=false)
+        monitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+    }
+
+    // Helper: create a LogRecord for testing react()
+    function _makeLogRecord(address contractAddr) internal pure returns (IReactive.LogRecord memory) {
+        return IReactive.LogRecord({
+            chain_id: 421614,
+            _contract: contractAddr,
+            topic_0: 0,
+            topic_1: 0,
+            topic_2: 0,
+            topic_3: 0,
+            data: "",
+            block_number: 100,
+            op_code: 0,
+            block_hash: 0,
+            tx_hash: 0,
+            log_index: 0
+        });
     }
 
     // ================================================================
-    // CONSTRUCTOR — HAPPY PATHS
+    // CONSTRUCTOR
     // ================================================================
 
-    function test_constructor_setsImmutables() public view {
-        assertEq(monitor.liquidShieldHook(), hookAddr);
+    function test_constructor_setsState() public view {
+        assertEq(monitor.callbackReceiver(), callbackReceiver);
         assertEq(monitor.unichainChainId(), UNICHAIN_CHAIN_ID);
         assertEq(monitor.owner(), ownerAddr);
     }
 
-    // ================================================================
-    // CONSTRUCTOR — SAD PATHS
-    // ================================================================
-
-    function test_constructor_revertsWhenZeroHook() public {
-        vm.expectRevert(Errors.ZeroAddress.selector);
+    function test_constructor_revertsWhenZeroReceiver() public {
+        vm.expectRevert("Zero callback receiver");
         new PositionMonitor(address(0), UNICHAIN_CHAIN_ID);
     }
 
     // ================================================================
-    // START MONITORING — HAPPY PATHS
+    // START MONITORING
     // ================================================================
 
     function test_startMonitoring_storesPosition() public {
         bytes32 posId = keccak256("pos1");
-        uint256 threshold = 13e17;
+        monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
 
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
-
-        (
-            bytes32 storedPosId, address storedUser, address storedProtocol,
-            uint256 storedChainId, uint256 storedThreshold, bool active
-        ) = monitor.monitoredPositions(posId);
+        (bytes32 storedPosId, address storedUser, address storedProtocol,
+         uint256 storedChainId, uint256 storedThreshold, bool active) = monitor.monitoredPositions(posId);
 
         assertEq(storedPosId, posId);
         assertEq(storedUser, user);
         assertEq(storedProtocol, lendingProtocol);
         assertEq(storedChainId, 421614);
-        assertEq(storedThreshold, threshold);
+        assertEq(storedThreshold, 13e17);
         assertTrue(active);
     }
 
     function test_startMonitoring_subscribesToReactive() public {
         bytes32 posId = keccak256("pos1");
-
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
 
-        // Check subscribe was called on the mock at REACTIVE_CALLBACK
-        MockReactiveCallback mock = MockReactiveCallback(REACTIVE_CALLBACK);
+        // Check subscribe was called on the mock service
+        MockSystemContract mock = MockSystemContract(payable(SERVICE_ADDR));
         assertEq(mock.lastSubscribeChainId(), 421614);
         assertEq(mock.lastSubscribeContract(), lendingProtocol);
         assertEq(
@@ -128,169 +122,102 @@ contract PositionMonitorTest is Test {
 
     function test_startMonitoring_emitsEvent() public {
         bytes32 posId = keccak256("pos1");
-
         vm.expectEmit(true, true, false, true);
         emit Events.PositionMonitoringStarted(posId, user, 421614);
-
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
     }
 
     function test_startMonitoring_multiplePositions() public {
         bytes32 posId1 = keccak256("pos1");
         bytes32 posId2 = keccak256("pos2");
-        address user2 = makeAddr("user2");
-
         monitor.startMonitoring(posId1, user, lendingProtocol, 421614, 13e17);
-        monitor.startMonitoring(posId2, user2, lendingProtocol, 11155111, 15e17);
+        monitor.startMonitoring(posId2, makeAddr("user2"), lendingProtocol, 11155111, 15e17);
 
-        (,, , , , bool active1) = monitor.monitoredPositions(posId1);
-        (,, , , , bool active2) = monitor.monitoredPositions(posId2);
+        (,,,,, bool active1) = monitor.monitoredPositions(posId1);
+        (,,,,, bool active2) = monitor.monitoredPositions(posId2);
         assertTrue(active1);
         assertTrue(active2);
     }
 
-    // ================================================================
-    // START MONITORING — SAD PATHS
-    // ================================================================
-
     function test_startMonitoring_revertsWhenNotOwner() public {
-        bytes32 posId = keccak256("pos1");
-
-        vm.expectRevert(Errors.UnauthorizedCaller.selector);
+        vm.expectRevert("Only owner");
         vm.prank(attacker);
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
+        monitor.startMonitoring(keccak256("pos1"), user, lendingProtocol, 421614, 13e17);
     }
 
     // ================================================================
-    // STOP MONITORING — HAPPY PATHS
+    // STOP MONITORING
     // ================================================================
 
     function test_stopMonitoring_deactivatesPosition() public {
         bytes32 posId = keccak256("pos1");
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
-
         monitor.stopMonitoring(posId);
 
-        (,, , , , bool active) = monitor.monitoredPositions(posId);
+        (,,,,, bool active) = monitor.monitoredPositions(posId);
         assertFalse(active);
     }
-
-    // ================================================================
-    // STOP MONITORING — SAD PATHS
-    // ================================================================
 
     function test_stopMonitoring_revertsWhenNotOwner() public {
         bytes32 posId = keccak256("pos1");
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
 
-        vm.expectRevert(Errors.UnauthorizedCaller.selector);
+        vm.expectRevert("Only owner");
         vm.prank(attacker);
         monitor.stopMonitoring(posId);
     }
 
     // ================================================================
-    // REACT — HAPPY PATHS
+    // REACT (vmOnly — must simulate ReactVM context)
     // ================================================================
 
-    function test_react_triggersCallback() public {
+    function test_react_emitsCallbackEvent() public {
         bytes32 posId = keccak256("pos1");
         uint256 threshold = 13e17;
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
-        // Simulate reactive callback (msg.sender = REACTIVE_CALLBACK)
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(
-            0, // chain_id
-            address(0), // _contract
-            0, // topic_0
-            uint256(posId), // topic_1 (used as positionId)
-            0, 0, // topic_2, topic_3
-            "", // data (empty = use conservative threshold - 1)
-            0, 0 // block_number, op_code
-        );
+        // In the real ReactVM, SERVICE_ADDR has no code → vm=true
+        // We need to remove the code at SERVICE_ADDR to simulate VM context
+        vm.etch(SERVICE_ADDR, "");
 
-        // Verify callback was sent to REACTIVE_CALLBACK
-        MockReactiveCallback mock = MockReactiveCallback(REACTIVE_CALLBACK);
-        assertEq(mock.lastCallbackChainId(), UNICHAIN_CHAIN_ID);
-        assertEq(mock.lastCallbackTarget(), hookAddr);
+        // Re-deploy in VM context (vm=true because SERVICE_ADDR has no code)
+        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+        // Re-register position (new instance)
+        vmMonitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
+
+        IReactive.LogRecord memory log = _makeLogRecord(lendingProtocol);
+
+        // react() should emit Callback event
+        vm.expectEmit(true, true, true, false);
+        emit IReactive.Callback(UNICHAIN_CHAIN_ID, callbackReceiver, 1_000_000, "");
+
+        vmMonitor.react(log);
     }
 
-    function test_react_usesConservativeHealthWhenNoData() public {
+    function test_react_emitsDefenseCallbackEvent() public {
         bytes32 posId = keccak256("pos1");
         uint256 threshold = 13e17;
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, "", 0, 0);
+        // Deploy in VM context
+        vm.etch(SERVICE_ADDR, "");
+        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+        vmMonitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
-        // The callback payload should encode triggerDefense(posId, threshold - 1)
-        MockReactiveCallback mock = MockReactiveCallback(REACTIVE_CALLBACK);
-        bytes memory expectedPayload = abi.encodeWithSignature(
-            "triggerDefense(bytes32,uint256)", posId, threshold - 1
-        );
-        assertEq(mock.lastCallbackPayload(), expectedPayload);
-    }
-
-    function test_react_usesEventDataWhenPresent() public {
-        bytes32 posId = keccak256("pos1");
-        uint256 threshold = 13e17;
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
-
-        // Pass actual health factor in event data
-        uint256 actualHealth = 11e17;
-        bytes memory eventData = abi.encode(actualHealth);
-
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, eventData, 0, 0);
-
-        MockReactiveCallback mock = MockReactiveCallback(REACTIVE_CALLBACK);
-        bytes memory expectedPayload = abi.encodeWithSignature(
-            "triggerDefense(bytes32,uint256)", posId, actualHealth
-        );
-        assertEq(mock.lastCallbackPayload(), expectedPayload);
-    }
-
-    function test_react_emitsEvent() public {
-        bytes32 posId = keccak256("pos1");
-        uint256 threshold = 13e17;
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
+        IReactive.LogRecord memory log = _makeLogRecord(lendingProtocol);
 
         vm.expectEmit(true, false, false, true);
         emit Events.DefenseCallbackEmitted(posId, threshold - 1);
 
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, "", 0, 0);
+        vmMonitor.react(log);
     }
 
-    // ================================================================
-    // REACT — SAD PATHS
-    // ================================================================
+    function test_react_revertsWhenNotVm() public {
+        // monitor was deployed with SERVICE_ADDR having code → vm=false
+        // react() should revert with "VM only"
+        IReactive.LogRecord memory log = _makeLogRecord(lendingProtocol);
 
-    function test_react_revertsWhenNotReactiveCallback() public {
-        bytes32 posId = keccak256("pos1");
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
-
-        vm.expectRevert(Errors.UnauthorizedCaller.selector);
-        vm.prank(attacker);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, "", 0, 0);
-    }
-
-    function test_react_revertsWhenPositionNotMonitored() public {
-        bytes32 posId = keccak256("nonexistent");
-
-        vm.expectRevert(Errors.PositionNotMonitored.selector);
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, "", 0, 0);
-    }
-
-    function test_react_revertsWhenPositionStopped() public {
-        bytes32 posId = keccak256("pos1");
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
-        monitor.stopMonitoring(posId);
-
-        vm.expectRevert(Errors.PositionNotMonitored.selector);
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, "", 0, 0);
+        vm.expectRevert("VM only");
+        monitor.react(log);
     }
 
     // ================================================================
@@ -303,7 +230,7 @@ contract PositionMonitorTest is Test {
 
         monitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
-        (, , , , uint256 storedThreshold, bool active) = monitor.monitoredPositions(posId);
+        (,,,, uint256 storedThreshold, bool active) = monitor.monitoredPositions(posId);
         assertEq(storedThreshold, threshold);
         assertTrue(active);
     }
@@ -314,26 +241,8 @@ contract PositionMonitorTest is Test {
 
         monitor.startMonitoring(posId, user, lendingProtocol, chainId, 13e17);
 
-        (, , , uint256 storedChainId, , bool active) = monitor.monitoredPositions(posId);
+        (,,, uint256 storedChainId,, bool active) = monitor.monitoredPositions(posId);
         assertEq(storedChainId, chainId);
         assertTrue(active);
-    }
-
-    function testFuzz_react_withEventData(uint256 healthValue) public {
-        healthValue = bound(healthValue, 1, 100e18);
-        bytes32 posId = keccak256("fuzz_react");
-        monitor.startMonitoring(posId, user, lendingProtocol, 421614, 13e17);
-
-        bytes memory eventData = abi.encode(healthValue);
-
-        vm.prank(REACTIVE_CALLBACK);
-        monitor.react(0, address(0), 0, uint256(posId), 0, 0, eventData, 0, 0);
-
-        // Verify the health value was passed through
-        MockReactiveCallback mock = MockReactiveCallback(REACTIVE_CALLBACK);
-        bytes memory expectedPayload = abi.encodeWithSignature(
-            "triggerDefense(bytes32,uint256)", posId, healthValue
-        );
-        assertEq(mock.lastCallbackPayload(), expectedPayload);
     }
 }
