@@ -170,30 +170,36 @@ LiquidShield leverages Unichain's 200ms Flashblock preconfirmations for sub-seco
 
 ### Reactive Network
 
-Cross-chain health factor monitoring via Reactive Smart Contracts — the canonical RSC use case.
+Cross-chain health factor monitoring via Reactive Smart Contracts — two-hop architecture with on-chain health validation.
 
 | File | Description |
 |---|---|
-| [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC deployed on Reactive Network (Lasna testnet) — inherits `AbstractReactive` + `IReactive`, subscribes to lending protocol events via `service.subscribe()`, emits `Callback` events for cross-chain delivery |
-| [`packages/contracts/src/rsc/DefenseCallback.sol`](./packages/contracts/src/rsc/DefenseCallback.sol) | Callback receiver on Unichain — inherits `AbstractCallback`, receives callbacks from Reactive callback proxy (`0x9299472A...FC4`), forwards `triggerDefense()` to hook |
-| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 14 Foundry tests: subscription, `react(LogRecord)` with `vmOnly`, callback emission, multi-position support |
+| [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC on Reactive Lasna — CRON-triggered, subscribes to HealthDanger events. Pure event router (no position storage). |
+| [`packages/contracts/src/rsc/HealthChecker.sol`](./packages/contracts/src/rsc/HealthChecker.sol) | On-chain health validator on Base Sepolia — reads `getUserAccountData()` from Aave, emits `HealthDanger` if HF < threshold |
+| [`packages/contracts/src/rsc/DefenseCallback.sol`](./packages/contracts/src/rsc/DefenseCallback.sol) | Callback receiver on Unichain — inherits `AbstractCallback`, first param is `address` (RVM ID overwrite), forwards `triggerDefense()` to hook |
+| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 7 Foundry tests: CRON callback, HealthDanger forwarding, event filtering, access control |
 
 ```mermaid
 sequenceDiagram
-    participant Aave as Aave V3 (Arbitrum)
-    participant RN as Reactive Network
-    participant RSC as PositionMonitor (RSC)
-    participant Proxy as Callback Proxy (Unichain)
-    participant CB as DefenseCallback
+    participant Cron as CRON (Lasna)
+    participant RSC as PositionMonitor
+    participant HC as HealthChecker (Base Sepolia)
+    participant Aave as Aave V3 Pool
+    participant CB as DefenseCallback (Unichain)
     participant Hook as LiquidShieldHook
 
-    Aave->>RN: ReserveDataUpdated event
-    RN->>RSC: react(LogRecord)
-    RSC->>RSC: Look up monitored positions
-    RSC-->>RN: emit Callback(unichainChainId, callbackReceiver, payload)
-    RN->>Proxy: Deliver callback tx
-    Proxy->>CB: onDefenseTriggered(positionId, health)
-    CB->>Hook: triggerDefense(positionId, health)
+    Note over Cron,HC: Hop 1: On-chain health check
+    Cron->>RSC: CRON tick
+    RSC-->>HC: checkPositions() callback
+    HC->>Aave: getUserAccountData(user)
+    Aave-->>HC: healthFactor
+    HC-->>HC: if HF < threshold: emit HealthDanger
+
+    Note over RSC,Hook: Hop 2: Defense trigger
+    RSC->>RSC: detect HealthDanger event
+    RSC-->>CB: onDefenseTriggered(rvmId, posId, health)
+    CB->>Hook: triggerDefense(posId, health)
+    Hook->>Hook: burn ERC-6909 + take + emit ERC-7683
 ```
 
 ### ERC-7683 (Cross-Chain Intents)
