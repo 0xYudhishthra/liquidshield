@@ -234,17 +234,13 @@ sequenceDiagram
 
 | Contract | Network | Address |
 |---|---|---|
-| `LiquidShieldHook` | Unichain Sepolia | `0x...` |
-| `LiquidShieldRouter` | Unichain Sepolia | `0x...` |
-| `LiquidShieldSettler` | Unichain Sepolia | `0x...` |
-| `DefenseExecutor` | Arbitrum Sepolia | `0x...` |
-| `DefenseExecutor` | Ethereum Sepolia | `0x...` |
-| `AaveV3Adapter` | Arbitrum Sepolia | `0x...` |
-| `MorphoBlueAdapter` | Ethereum Sepolia | `0x...` |
-| `DefenseCallback` | Unichain Sepolia | `0x...` |
-| `PositionMonitor` (RSC) | Reactive Lasna | `0x...` |
-
-*Deployment pending — addresses will be filled after testnet deployment.*
+| `LiquidShieldHook` | Unichain Sepolia | `0x008E3fDE34a243F1aa18CC0f381040063eCC95C0` |
+| `LiquidShieldRouter` | Unichain Sepolia | `0xdf9aE57790c9c26AD5f0D986267216d9E8d8Cc9E` |
+| `LiquidShieldSettler` | Unichain Sepolia | `0xF540054007966371d338D337d73A08A34649aB76` |
+| `DefenseExecutor` | Arbitrum Sepolia | `0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67` |
+| `AaveV3Adapter` | Arbitrum Sepolia | `0x1eB7638CAa7053833Ad9cd7E8276f3E3574AD106` |
+| `DefenseCallback` | Unichain Sepolia | *Pending RSC deployment* |
+| `PositionMonitor` (RSC) | Reactive Lasna | *Pending RSC deployment* |
 
 ---
 
