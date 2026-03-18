@@ -1,7 +1,0 @@
-node_modules
-.ponder
-dist
-*.test.ts
-.env
-.env.local
-.git
