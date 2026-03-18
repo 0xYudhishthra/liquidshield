@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity >=0.8.0;
 
-import {Errors} from "../lib/Errors.sol";
+import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
+import {AbstractReactive} from "reactive-lib/src/abstract-base/AbstractReactive.sol";
 import {Events} from "../lib/Events.sol";
-
-/// @notice Interface for Reactive Network subscription service
-interface ISubscriptionService {
-    function subscribe(uint256 chain_id, address _contract, uint256 topic_0, uint256 topic_1, uint256 topic_2, uint256 topic_3) external;
-}
 
 /// @title PositionMonitor
 /// @author LiquidShield Team
-/// @notice Reactive Smart Contract (RSC) that monitors lending positions and triggers defense callbacks
-/// @dev Deployed on Reactive Network's Kopli Testnet. Subscribes to lending protocol events
-///      on source chains and sends native callbacks to the LiquidShield hook on Unichain
-///      when health factor drops below the configured threshold.
-contract PositionMonitor {
+/// @notice Reactive Smart Contract (RSC) deployed on Reactive Network that monitors
+///         lending protocol events on source chains and triggers defense callbacks
+///         on the LiquidShield hook via the Unichain callback receiver.
+/// @dev Inherits AbstractReactive for proper Reactive Network integration.
+///      Subscribes to Aave V3 ReserveDataUpdated events on source chains.
+///      When an event fires, emits a Callback event that Reactive Network delivers
+///      to the DefenseCallback contract on Unichain Sepolia.
+contract PositionMonitor is IReactive, AbstractReactive {
 
     // ============ CONSTANTS ============
 
-    /// @dev Reactive Network callback address for subscription and callback routing
-    address private constant REACTIVE_CALLBACK = 0x0000000000000000000000000000000000fffFfF;
+    /// @dev Gas limit for the callback transaction on the destination chain
+    uint64 private constant CALLBACK_GAS_LIMIT = 1_000_000;
 
-    /// @dev Reactive Network sentinel value to ignore a topic filter
-    uint256 private constant REACTIVE_IGNORE = 0xa65f96fc951c35ead38878e0f51571587571505116562c1e910e850f78e1;
+    /// @dev Aave V3 ReserveDataUpdated event topic
+    uint256 private constant RESERVE_DATA_UPDATED_TOPIC =
+        uint256(keccak256("ReserveDataUpdated(address,uint256,uint256,uint256,uint256,uint256)"));
 
     // ============ STRUCTS ============
 
-    /// @notice Data for a position being monitored by the RSC
     struct MonitoredPosition {
         bytes32 positionId;
         address user;
@@ -39,8 +38,8 @@ contract PositionMonitor {
 
     // ============ STATE VARIABLES ============
 
-    /// @notice Address of the LiquidShield hook on Unichain
-    address public liquidShieldHook;
+    /// @notice Address of the DefenseCallback contract on Unichain
+    address public callbackReceiver;
 
     /// @notice Unichain chain ID for callback routing
     uint256 public unichainChainId;
@@ -51,36 +50,34 @@ contract PositionMonitor {
     /// @notice Monitored positions by ID
     mapping(bytes32 => MonitoredPosition) public monitoredPositions;
 
+    /// @notice Reverse mapping: lending protocol address → position IDs
+    mapping(address => bytes32[]) public protocolPositions;
+
     // ============ MODIFIERS ============
 
     modifier onlyOwner() {
-        if (msg.sender != owner) revert Errors.UnauthorizedCaller();
-        _;
-    }
-
-    modifier onlyReactive() {
-        if (msg.sender != REACTIVE_CALLBACK) revert Errors.UnauthorizedCaller();
+        require(msg.sender == owner, "Only owner");
         _;
     }
 
     // ============ CONSTRUCTOR ============
 
     /// @notice Deploys the position monitor RSC
-    /// @param _hook Address of the LiquidShield hook on Unichain
+    /// @param _callbackReceiver Address of DefenseCallback contract on Unichain
     /// @param _unichainChainId Chain ID of Unichain for callback routing
-    constructor(address _hook, uint256 _unichainChainId) {
-        if (_hook == address(0)) revert Errors.ZeroAddress();
-        liquidShieldHook = _hook;
+    constructor(address _callbackReceiver, uint256 _unichainChainId) payable {
+        require(_callbackReceiver != address(0), "Zero callback receiver");
+        callbackReceiver = _callbackReceiver;
         unichainChainId = _unichainChainId;
         owner = msg.sender;
     }
 
-    // ============ EXTERNAL FUNCTIONS (STATE-CHANGING) ============
+    // ============ EXTERNAL FUNCTIONS ============
 
     /// @notice Starts monitoring a lending position for health factor drops
     /// @param positionId Unique position identifier
     /// @param user Address of the position owner on the source chain
-    /// @param lendingProtocol Address of the lending protocol on the source chain
+    /// @param lendingProtocol Address of the lending protocol contract on the source chain
     /// @param sourceChainId Chain ID of the source chain
     /// @param healthThreshold Health factor threshold below which defense triggers
     function startMonitoring(
@@ -90,12 +87,20 @@ contract PositionMonitor {
         monitoredPositions[positionId] = MonitoredPosition(
             positionId, user, lendingProtocol, sourceChainId, healthThreshold, true
         );
+        protocolPositions[lendingProtocol].push(positionId);
 
-        ISubscriptionService(REACTIVE_CALLBACK).subscribe(
-            sourceChainId, lendingProtocol,
-            uint256(keccak256("ReserveDataUpdated(address,uint256,uint256,uint256,uint256,uint256)")),
-            REACTIVE_IGNORE, REACTIVE_IGNORE, REACTIVE_IGNORE
-        );
+        // Subscribe to ReserveDataUpdated events on the source chain
+        // Only runs on Reactive Network (not in ReactVM)
+        if (!vm) {
+            service.subscribe(
+                sourceChainId,
+                lendingProtocol,
+                RESERVE_DATA_UPDATED_TOPIC,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+        }
 
         emit Events.PositionMonitoringStarted(positionId, user, sourceChainId);
     }
@@ -106,34 +111,32 @@ contract PositionMonitor {
         monitoredPositions[positionId].active = false;
     }
 
-    /// @notice Reactive callback invoked when a subscribed event fires on the source chain
-    /// @dev Only callable by the Reactive Network callback address. Triggers defense
-    ///      on the LiquidShield hook via native Reactive callback to Unichain.
-    function react(
-        uint256, address, uint256, uint256 topic_1,
-        uint256, uint256, bytes calldata data, uint256, uint256
-    ) external onlyReactive {
-        // topic_1 is the reserve asset address from ReserveDataUpdated event
-        bytes32 positionId = bytes32(topic_1);
-        MonitoredPosition storage pos = monitoredPositions[positionId];
-        if (!pos.active) revert Errors.PositionNotMonitored();
+    /// @notice Reactive callback invoked by the ReactVM when a subscribed event fires
+    /// @dev Only executes inside the ReactVM (vmOnly). Emits Callback event to trigger
+    ///      defense on Unichain via the callback proxy.
+    /// @param log The log record from the source chain event
+    function react(LogRecord calldata log) external vmOnly {
+        // Look up positions monitored for this lending protocol
+        bytes32[] storage posIds = protocolPositions[log._contract];
 
-        // Conservative: trigger defense at threshold - 1
-        uint256 currentHealth = pos.healthThreshold - 1;
+        for (uint256 i = 0; i < posIds.length; i++) {
+            MonitoredPosition storage pos = monitoredPositions[posIds[i]];
+            if (!pos.active) continue;
 
-        // If event data contains health info, use it
-        if (data.length >= 32) {
-            currentHealth = abi.decode(data, (uint256));
+            // Conservative approach: trigger defense at threshold - 1
+            // The actual health factor check happens on-chain at the hook
+            uint256 currentHealth = pos.healthThreshold - 1;
+
+            // Encode the callback to DefenseCallback.onDefenseTriggered()
+            bytes memory payload = abi.encodeWithSignature(
+                "onDefenseTriggered(bytes32,uint256)",
+                pos.positionId,
+                currentHealth
+            );
+
+            // Emit Callback event — Reactive Network delivers this to Unichain
+            emit Callback(unichainChainId, callbackReceiver, CALLBACK_GAS_LIMIT, payload);
+            emit Events.DefenseCallbackEmitted(pos.positionId, currentHealth);
         }
-
-        bytes memory payload = abi.encodeWithSignature(
-            "triggerDefense(bytes32,uint256)", positionId, currentHealth
-        );
-        (bool success,) = REACTIVE_CALLBACK.call(
-            abi.encode(unichainChainId, liquidShieldHook, payload)
-        );
-        require(success, "Reactive callback failed");
-
-        emit Events.DefenseCallbackEmitted(positionId, currentHealth);
     }
 }
