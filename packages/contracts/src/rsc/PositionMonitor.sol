@@ -7,155 +7,146 @@ import {Events} from "../lib/Events.sol";
 
 /// @title PositionMonitor
 /// @author LiquidShield Team
-/// @notice Reactive Smart Contract (RSC) deployed on Reactive Network that monitors
-///         lending protocol events on source chains and triggers defense callbacks
-///         on the LiquidShield hook via the Unichain callback receiver.
-/// @dev Inherits AbstractReactive for proper Reactive Network integration.
-///      Subscribes to Aave V3 ReserveDataUpdated events on source chains.
-///      When an event fires, emits a Callback event that Reactive Network delivers
-///      to the DefenseCallback contract on Unichain Sepolia.
+/// @notice Reactive Smart Contract (RSC) deployed on Reactive Network (Lasna).
+///         Two-hop architecture:
+///         Hop 1: CRON tick → callback to HealthChecker on source chain (reads Aave health on-chain)
+///         Hop 2: HealthChecker emits HealthDanger → RSC reacts → callback to DefenseCallback on Unichain
+/// @dev Follows patterns from Reactive Network's official demos:
+///      - CRON subscription from Aave Liquidation Protection demo
+///      - Event-based reaction from Uniswap Stop Order demo
+///      - Health factor read on the chain where Aave lives (not in RSC)
 contract PositionMonitor is IReactive, AbstractReactive {
 
     // ============ CONSTANTS ============
 
-    /// @dev Gas limit for the callback transaction on the destination chain
-    uint64 private constant CALLBACK_GAS_LIMIT = 1_000_000;
+    uint64 private constant CALLBACK_GAS_LIMIT = 2_000_000;
 
-    /// @dev Aave V3 ReserveDataUpdated event topic
-    uint256 private constant RESERVE_DATA_UPDATED_TOPIC =
-        uint256(keccak256("ReserveDataUpdated(address,uint256,uint256,uint256,uint256,uint256)"));
+    /// @dev keccak256("HealthDanger(bytes32,uint256,address)")
+    uint256 private constant HEALTH_DANGER_TOPIC =
+        uint256(keccak256("HealthDanger(bytes32,uint256,address)"));
 
-    // ============ STRUCTS ============
+    /// @dev keccak256("CheckCycleCompleted(uint256,uint256,uint256)")
+    uint256 private constant CHECK_CYCLE_COMPLETED_TOPIC =
+        uint256(keccak256("CheckCycleCompleted(uint256,uint256,uint256)"));
 
-    struct MonitoredPosition {
-        bytes32 positionId;
-        address user;
-        address lendingProtocol;
-        uint256 sourceChainId;
-        uint256 healthThreshold;
-        bool active;
-    }
+    // ============ STATE ============
 
-    // ============ STATE VARIABLES ============
+    /// @notice HealthChecker contract on the source chain (same chain as Aave)
+    address public healthChecker;
 
-    /// @notice Address of the DefenseCallback contract on Unichain
-    address public callbackReceiver;
+    /// @notice Source chain ID where HealthChecker + Aave live
+    uint256 public sourceChainId;
 
-    /// @notice Unichain chain ID for callback routing
+    /// @notice DefenseCallback contract on Unichain
+    address public defenseCallback;
+
+    /// @notice Unichain chain ID
     uint256 public unichainChainId;
 
-    /// @notice Contract owner for admin operations
+    /// @notice CRON topic for periodic health checks
+    uint256 public cronTopic;
+
+    /// @notice Owner
     address public owner;
 
-    /// @notice Monitored positions by ID
-    mapping(bytes32 => MonitoredPosition) public monitoredPositions;
-
-    /// @notice Reverse mapping: lending protocol address → position IDs
-    mapping(address => bytes32[]) public protocolPositions;
-
-    // ============ MODIFIERS ============
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner");
-        _;
-    }
+    /// @notice Processing lock (prevents overlapping CRON cycles)
+    bool public processingActive;
 
     // ============ CONSTRUCTOR ============
 
-    /// @notice Deploys the position monitor RSC with initial subscription
-    /// @param _callbackReceiver Address of DefenseCallback contract on Unichain
-    /// @param _unichainChainId Chain ID of Unichain for callback routing
-    /// @param _lendingProtocol Address of the lending protocol to monitor (e.g., Aave Pool)
-    /// @param _sourceChainId Chain ID of the source chain (e.g., 84532 for Base Sepolia)
+    /// @param _healthChecker HealthChecker contract on the source chain
+    /// @param _sourceChainId Chain ID where HealthChecker lives (e.g., 84532 for Base Sepolia)
+    /// @param _defenseCallback DefenseCallback contract on Unichain
+    /// @param _unichainChainId Unichain chain ID (1301)
+    /// @param _cronTopic CRON topic for periodic monitoring
     constructor(
-        address _callbackReceiver,
+        address _healthChecker,
+        uint256 _sourceChainId,
+        address _defenseCallback,
         uint256 _unichainChainId,
-        address _lendingProtocol,
-        uint256 _sourceChainId
+        uint256 _cronTopic
     ) payable {
-        require(_callbackReceiver != address(0), "Zero callback receiver");
-        callbackReceiver = _callbackReceiver;
+        healthChecker = _healthChecker;
+        sourceChainId = _sourceChainId;
+        defenseCallback = _defenseCallback;
         unichainChainId = _unichainChainId;
+        cronTopic = _cronTopic;
         owner = msg.sender;
+        processingActive = false;
 
-        // Subscribe in constructor — required by Reactive Network
         if (!vm) {
+            // Hop 1 trigger: subscribe to CRON events on Reactive Network
+            service.subscribe(
+                block.chainid,
+                address(service),
+                _cronTopic,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+
+            // Hop 2 trigger: subscribe to HealthDanger events from HealthChecker
             service.subscribe(
                 _sourceChainId,
-                _lendingProtocol,
-                RESERVE_DATA_UPDATED_TOPIC,
+                _healthChecker,
+                HEALTH_DANGER_TOPIC,
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE
             );
-        }
-    }
 
-    // ============ EXTERNAL FUNCTIONS ============
-
-    /// @notice Starts monitoring a lending position for health factor drops
-    /// @param positionId Unique position identifier
-    /// @param user Address of the position owner on the source chain
-    /// @param lendingProtocol Address of the lending protocol contract on the source chain
-    /// @param sourceChainId Chain ID of the source chain
-    /// @param healthThreshold Health factor threshold below which defense triggers
-    function startMonitoring(
-        bytes32 positionId, address user, address lendingProtocol,
-        uint256 sourceChainId, uint256 healthThreshold
-    ) external onlyOwner {
-        monitoredPositions[positionId] = MonitoredPosition(
-            positionId, user, lendingProtocol, sourceChainId, healthThreshold, true
-        );
-        protocolPositions[lendingProtocol].push(positionId);
-
-        // Subscribe to ReserveDataUpdated events on the source chain
-        // Only runs on Reactive Network (not in ReactVM)
-        if (!vm) {
+            // Reset lock: subscribe to CheckCycleCompleted events
             service.subscribe(
-                sourceChainId,
-                lendingProtocol,
-                RESERVE_DATA_UPDATED_TOPIC,
+                _sourceChainId,
+                _healthChecker,
+                CHECK_CYCLE_COMPLETED_TOPIC,
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE,
                 REACTIVE_IGNORE
             );
         }
-
-        emit Events.PositionMonitoringStarted(positionId, user, sourceChainId);
     }
 
-    /// @notice Stops monitoring a lending position
-    /// @param positionId Unique position identifier to stop monitoring
-    function stopMonitoring(bytes32 positionId) external onlyOwner {
-        monitoredPositions[positionId].active = false;
-    }
+    // ============ REACT ============
 
-    /// @notice Reactive callback invoked by the ReactVM when a subscribed event fires
-    /// @dev Only executes inside the ReactVM (vmOnly). Emits Callback event to trigger
-    ///      defense on Unichain via the callback proxy.
-    /// @param log The log record from the source chain event
     function react(LogRecord calldata log) external vmOnly {
-        // Look up positions monitored for this lending protocol
-        bytes32[] storage posIds = protocolPositions[log._contract];
 
-        for (uint256 i = 0; i < posIds.length; i++) {
-            MonitoredPosition storage pos = monitoredPositions[posIds[i]];
-            if (!pos.active) continue;
+        if (log.topic_0 == cronTopic) {
+            // ─── HOP 1: CRON tick → send callback to HealthChecker on source chain ───
+            if (processingActive) return;
+            processingActive = true;
 
-            // Conservative approach: trigger defense at threshold - 1
-            // The actual health factor check happens on-chain at the hook
-            uint256 currentHealth = pos.healthThreshold - 1;
+            bytes memory payload = abi.encodeWithSignature(
+                "checkPositions(address)",
+                address(0) // placeholder — Reactive overwrites first 160 bits with RVM ID
+            );
 
-            // Encode the callback to DefenseCallback.onDefenseTriggered()
+            emit Callback(sourceChainId, healthChecker, CALLBACK_GAS_LIMIT, payload);
+
+        } else if (log.topic_0 == HEALTH_DANGER_TOPIC && log._contract == healthChecker) {
+            // ─── HOP 2: HealthDanger detected → trigger defense on Unichain ───
+            bytes32 positionId = bytes32(log.topic_1);
+            uint256 currentHealth = uint256(log.topic_2);
+
             bytes memory payload = abi.encodeWithSignature(
                 "onDefenseTriggered(bytes32,uint256)",
-                pos.positionId,
+                positionId,
                 currentHealth
             );
 
-            // Emit Callback event — Reactive Network delivers this to Unichain
-            emit Callback(unichainChainId, callbackReceiver, CALLBACK_GAS_LIMIT, payload);
-            emit Events.DefenseCallbackEmitted(pos.positionId, currentHealth);
+            emit Callback(unichainChainId, defenseCallback, CALLBACK_GAS_LIMIT, payload);
+            emit Events.DefenseCallbackEmitted(positionId, currentHealth);
+
+        } else if (log.topic_0 == CHECK_CYCLE_COMPLETED_TOPIC && log._contract == healthChecker) {
+            // ─── RESET: cycle completed, allow next CRON trigger ───
+            processingActive = false;
         }
+    }
+
+    // ============ ADMIN ============
+
+    function resetProcessing() external {
+        require(msg.sender == owner, "Only owner");
+        processingActive = false;
     }
 }
