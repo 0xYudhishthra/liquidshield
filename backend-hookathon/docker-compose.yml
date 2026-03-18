@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # ── Otterscan: local block explorer for Anvil ────────────────────────────────
+  # Browse blocks/txs at http://localhost:5100
+  # Connects to Anvil running on the host at port 8545
+  otterscan:
+    image: otterscan/otterscan:latest
+    container_name: aqua0_otterscan
+    ports:
+      - "5100:80"
+    environment:
+      # Point to host-running Anvil
+      ERIGON_URL: "http://127.0.0.1:8545"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: aqua0_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ponder
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: aqua0_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

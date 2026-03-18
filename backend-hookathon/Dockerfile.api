@@ -1,0 +1,34 @@
+# ============================================
+# Aqua0 API Server
+# Build: Node.js + pnpm (workspace resolution)
+# Runtime: Bun
+# ============================================
+
+# ---- Install dependencies with Node + pnpm ----
+FROM node:20-slim AS deps
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+COPY packages/shared/package.json ./packages/shared/package.json
+COPY packages/api/package.json ./packages/api/package.json
+RUN pnpm install --frozen-lockfile --filter @aqua0/api...
+
+# ---- Assemble sources ----
+FROM node:20-slim AS build
+WORKDIR /app
+COPY --from=deps /app ./
+COPY packages/shared ./packages/shared
+COPY packages/api ./packages/api
+COPY openapi.yaml ./openapi.yaml
+
+# ---- Runtime with Bun ----
+FROM oven/bun:1-slim AS runtime
+WORKDIR /app
+COPY --from=build /app ./
+
+ENV NODE_ENV=production
+ENV PORT=3001
+EXPOSE 3001
+
+CMD ["bun", "run", "packages/api/src/index.ts"]

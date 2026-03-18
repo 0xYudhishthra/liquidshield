@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "paths": {
+      "@/generated": ["./generated"]
+    },
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "ponder.config.ts", "ponder.schema.ts"],
+  "exclude": ["node_modules", "dist", ".ponder"]
+}

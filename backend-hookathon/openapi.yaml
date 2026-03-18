@@ -1,0 +1,2229 @@
+openapi: 3.0.3
+info:
+  title: Aqua0 API
+  description: |
+    REST API for the Aqua0 cross-chain shared liquidity protocol built on 1inch Aqua.
+    Provides endpoints for strategies, positions, swaps, metrics, tokens, rebalancing, and user management.
+  version: 1.0.0
+  contact:
+    name: Aqua0
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3001
+    description: Local development
+  - url: https://api.aqua0.xyz
+    description: Production
+
+tags:
+  - name: Health
+    description: Health and readiness checks
+  - name: Chains
+    description: Supported chain information
+  - name: LP
+    description: LP account management and strategy operations (calldata builders)
+  - name: Strategies
+    description: Strategy discovery and details
+  - name: Positions
+    description: LP position management
+  - name: Swaps
+    description: Swap quotes, calldata, and history
+  - name: Metrics
+    description: Protocol-wide metrics and analytics
+  - name: Tokens
+    description: Supported token information
+  - name: Rebalancer
+    description: Cross-chain rebalancing configuration
+  - name: Users
+    description: User profiles and preferences
+  - name: Admin
+    description: Admin strategy metadata CRUD
+
+security:
+  - BasicAuth: []
+    ApiKeyAuth: []
+
+paths:
+  # ============================================
+  # Health & Status
+  # ============================================
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, timestamp]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness check (DB + cache connectivity)
+      operationId: getReady
+      responses:
+        "200":
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more dependencies unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+
+  /api/v1/chains:
+    get:
+      tags: [Chains]
+      summary: List supported chains
+      operationId: getChains
+      responses:
+        "200":
+          description: Supported chains
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chains]
+                properties:
+                  chains:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Chain"
+
+  # ============================================
+  # LP — Account Management & Strategy Operations
+  # All write endpoints return calldata for the frontend to sign.
+  # Backend never holds private keys.
+  # ============================================
+
+  /api/v1/lp/accounts/prepare-create:
+    post:
+      tags: [LP]
+      summary: Get calldata to create a new LP account
+      operationId: prepareCreateAccount
+      parameters:
+        - $ref: "#/components/parameters/RequiredChainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [owner, signature]
+              properties:
+                owner:
+                  $ref: "#/components/schemas/EthereumAddress"
+                signature:
+                  $ref: "#/components/schemas/HexBytes"
+      responses:
+        "200":
+          description: Calldata for AccountFactory.createAccount
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calldata]
+                properties:
+                  calldata:
+                    $ref: "#/components/schemas/TransactionCalldata"
+
+  /api/v1/lp/accounts/{address}:
+    get:
+      tags: [LP]
+      summary: Get account info (owner, router, rebalancer status)
+      operationId: getAccountInfo
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+        - $ref: "#/components/parameters/RequiredChainId"
+      responses:
+        "200":
+          description: Account details read from chain
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account]
+                properties:
+                  account:
+                    $ref: "#/components/schemas/AccountInfo"
+
+  /api/v1/lp/accounts/{address}/balance/{token}:
+    get:
+      tags: [LP]
+      summary: Get ERC20 token balance held by account
+      operationId: getAccountTokenBalance
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+        - name: token
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+        - $ref: "#/components/parameters/RequiredChainId"
+      responses:
+        "200":
+          description: Token balance as string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [balance]
+                properties:
+                  balance:
+                    $ref: "#/components/schemas/BigIntString"
+
+  /api/v1/lp/accounts/{address}/prepare-approve:
+    post:
+      tags: [LP]
+      summary: Get calldata to approve Aqua for a token
+      operationId: prepareApproveAqua
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, amount]
+              properties:
+                token:
+                  $ref: "#/components/schemas/EthereumAddress"
+                amount:
+                  $ref: "#/components/schemas/BigIntString"
+      responses:
+        "200":
+          description: Calldata for Account.approveAqua
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calldata]
+                properties:
+                  calldata:
+                    $ref: "#/components/schemas/TransactionCalldata"
+
+  /api/v1/lp/accounts/{address}/prepare-ship:
+    post:
+      tags: [LP]
+      summary: Get calldata to ship (activate) a strategy
+      operationId: prepareShip
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategyBytes, tokens, amounts]
+              properties:
+                strategyBytes:
+                  type: string
+                  pattern: "^0x[a-fA-F0-9]*$"
+                  description: ABI-encoded strategy bytes (abi.encode(maker, traits, data))
+                tokens:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/EthereumAddress"
+                  minItems: 1
+                amounts:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/BigIntString"
+                  minItems: 1
+      responses:
+        "200":
+          description: Calldata for Account.ship + computed strategy hash
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calldata, strategyHash]
+                properties:
+                  calldata:
+                    $ref: "#/components/schemas/TransactionCalldata"
+                  strategyHash:
+                    $ref: "#/components/schemas/StrategyHash"
+
+  /api/v1/lp/accounts/{address}/prepare-dock:
+    post:
+      tags: [LP]
+      summary: Get calldata to dock (deactivate) a strategy
+      operationId: prepareDock
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategyHash]
+              properties:
+                strategyHash:
+                  $ref: "#/components/schemas/StrategyHash"
+      responses:
+        "200":
+          description: Calldata for Account.dock
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calldata]
+                properties:
+                  calldata:
+                    $ref: "#/components/schemas/TransactionCalldata"
+
+  /api/v1/lp/accounts/{address}/strategies/{hash}:
+    get:
+      tags: [LP]
+      summary: Get strategy tokens and virtual balances from Aqua
+      operationId: getStrategyDetails
+      parameters:
+        - $ref: "#/components/parameters/AccountAddressPath"
+        - $ref: "#/components/parameters/StrategyHashPath"
+        - $ref: "#/components/parameters/RequiredChainId"
+      responses:
+        "200":
+          description: Strategy tokens and raw balances from Aqua
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategyHash, tokens, rawBalances]
+                properties:
+                  strategyHash:
+                    $ref: "#/components/schemas/StrategyHash"
+                  tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EthereumAddress"
+                  rawBalances:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RawBalance"
+
+  # ============================================
+  # Admin
+  # ============================================
+  /api/v1/admin/strategies:
+    get:
+      tags: [Admin]
+      summary: List all strategies (including deprecated)
+      operationId: adminListStrategies
+      parameters:
+        - name: includeDeprecated
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+      responses:
+        "200":
+          description: All strategy metadata entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategies]
+                properties:
+                  strategies:
+                    type: array
+                    items:
+                      type: object
+    post:
+      tags: [Admin]
+      summary: Create strategy metadata
+      operationId: adminCreateStrategy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategy_hash, strategy_type]
+              properties:
+                strategy_hash:
+                  $ref: "#/components/schemas/StrategyHash"
+                strategy_type:
+                  $ref: "#/components/schemas/StrategyType"
+                display_name:
+                  type: string
+                description:
+                  type: string
+                risk_level:
+                  type: string
+                  enum: [low, medium, high]
+                fee_bps:
+                  type: integer
+                is_featured:
+                  type: boolean
+                supported_chains:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ChainId"
+      responses:
+        "201":
+          description: Strategy metadata created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategy]
+                properties:
+                  strategy:
+                    type: object
+
+  /api/v1/admin/strategies/{hash}:
+    put:
+      tags: [Admin]
+      summary: Update strategy metadata
+      operationId: adminUpdateStrategy
+      parameters:
+        - $ref: "#/components/parameters/StrategyHashPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name:
+                  type: string
+                description:
+                  type: string
+                strategy_type:
+                  $ref: "#/components/schemas/StrategyType"
+                risk_level:
+                  type: string
+                  enum: [low, medium, high]
+                fee_bps:
+                  type: integer
+                is_featured:
+                  type: boolean
+                is_deprecated:
+                  type: boolean
+      responses:
+        "200":
+          description: Strategy metadata updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategy]
+                properties:
+                  strategy:
+                    type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Admin]
+      summary: Deprecate strategy (soft delete)
+      operationId: adminDeprecateStrategy
+      parameters:
+        - $ref: "#/components/parameters/StrategyHashPath"
+      responses:
+        "200":
+          description: Strategy deprecated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategy]
+                properties:
+                  strategy:
+                    type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ============================================
+  # Strategies
+  # ============================================
+  /api/v1/strategies:
+    get:
+      tags: [Strategies]
+      summary: List strategies with optional filters
+      operationId: listStrategies
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/StrategyType"
+        - name: featured
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - name: tokenIn
+          in: query
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+        - name: tokenOut
+          in: query
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+      responses:
+        "200":
+          description: List of strategies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategies]
+                properties:
+                  strategies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Strategy"
+
+  /api/v1/strategies/featured:
+    get:
+      tags: [Strategies]
+      summary: Get featured strategies
+      operationId: getFeaturedStrategies
+      responses:
+        "200":
+          description: Featured strategies
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategies]
+                properties:
+                  strategies:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Strategy"
+
+  /api/v1/strategies/{hash}:
+    get:
+      tags: [Strategies]
+      summary: Get strategy details by hash
+      operationId: getStrategy
+      parameters:
+        - $ref: "#/components/parameters/StrategyHashPath"
+      responses:
+        "200":
+          description: Strategy details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [strategy]
+                properties:
+                  strategy:
+                    $ref: "#/components/schemas/StrategyDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/strategies/{hash}/stats:
+    get:
+      tags: [Strategies]
+      summary: Get strategy statistics
+      operationId: getStrategyStats
+      parameters:
+        - $ref: "#/components/parameters/StrategyHashPath"
+        - name: chainId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Strategy statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stats]
+                properties:
+                  stats:
+                    $ref: "#/components/schemas/StrategyStats"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/strategies/build:
+    post:
+      tags: [Strategies]
+      summary: Build strategy bytecode from a template
+      operationId: buildStrategy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [constantProduct]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, linearWidth, rate0, rate1, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [stableSwap]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    linearWidth:
+                      $ref: "#/components/schemas/BigIntString"
+                    rate0:
+                      $ref: "#/components/schemas/BigIntString"
+                    rate1:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, deltaIn, deltaOut, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [concentratedLiquidity]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    deltaIn:
+                      $ref: "#/components/schemas/BigIntString"
+                    deltaOut:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, startTime, duration, decayFactor, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [dutchAuction]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    startTime:
+                      $ref: "#/components/schemas/BigIntString"
+                    duration:
+                      type: integer
+                    decayFactor:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, startTime, duration, priceBump, minTradeAmountOut, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [twap]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    startTime:
+                      $ref: "#/components/schemas/BigIntString"
+                    duration:
+                      $ref: "#/components/schemas/BigIntString"
+                    priceBump:
+                      $ref: "#/components/schemas/BigIntString"
+                    minTradeAmountOut:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, makerDirectionLt]
+                  properties:
+                    template:
+                      type: string
+                      enum: [limitOrder]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    makerDirectionLt:
+                      type: integer
+                    fullOnly:
+                      type: boolean
+                      default: false
+                - type: object
+                  required: [template, maker, token0, token1, balance0, balance1, baseGasPrice, ethToToken1Price, gasAmount, maxPriceDecay, feeBps]
+                  properties:
+                    template:
+                      type: string
+                      enum: [baseFeeAdjusted]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token0:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    token1:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    balance0:
+                      $ref: "#/components/schemas/BigIntString"
+                    balance1:
+                      $ref: "#/components/schemas/BigIntString"
+                    baseGasPrice:
+                      $ref: "#/components/schemas/BigIntString"
+                    ethToToken1Price:
+                      $ref: "#/components/schemas/BigIntString"
+                    gasAmount:
+                      type: integer
+                    maxPriceDecay:
+                      $ref: "#/components/schemas/BigIntString"
+                    feeBps:
+                      type: integer
+                - type: object
+                  required: [template, maker, instructions]
+                  properties:
+                    template:
+                      type: string
+                      enum: [custom]
+                    maker:
+                      $ref: "#/components/schemas/EthereumAddress"
+                    instructions:
+                      type: array
+                      items:
+                        type: object
+              discriminator:
+                propertyName: template
+      responses:
+        "200":
+          description: Built strategy bytecode, order, hash, and taker data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [program, order, strategyBytes, strategyHash, tokens, amounts, takerData]
+                properties:
+                  program:
+                    $ref: "#/components/schemas/HexBytes"
+                  order:
+                    $ref: "#/components/schemas/SwapVMOrder"
+                  strategyBytes:
+                    $ref: "#/components/schemas/HexBytes"
+                  strategyHash:
+                    $ref: "#/components/schemas/StrategyHash"
+                  tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EthereumAddress"
+                  amounts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BigIntString"
+                  takerData:
+                    $ref: "#/components/schemas/HexBytes"
+
+  # ============================================
+  # Positions
+  # ============================================
+  /api/v1/positions/{wallet}:
+    get:
+      tags: [Positions]
+      summary: Get positions by wallet address
+      operationId: getPositions
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+        - $ref: "#/components/parameters/ChainFilter"
+        - name: strategyHash
+          in: query
+          schema:
+            $ref: "#/components/schemas/StrategyHash"
+        - name: active
+          in: query
+          schema:
+            type: string
+            enum: ["true", "false"]
+      responses:
+        "200":
+          description: Positions and LP accounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [positions, lpAccounts]
+                properties:
+                  positions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Position"
+                  lpAccounts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/LPAccount"
+
+  /api/v1/positions/{wallet}/summary:
+    get:
+      tags: [Positions]
+      summary: Get aggregated position summary
+      operationId: getPositionSummary
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+      responses:
+        "200":
+          description: Position summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary]
+                properties:
+                  summary:
+                    $ref: "#/components/schemas/PositionSummary"
+
+  /api/v1/positions/{wallet}/history:
+    get:
+      tags: [Positions]
+      summary: Get position history events
+      operationId: getPositionHistory
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+      responses:
+        "200":
+          description: Position history events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PositionEvent"
+
+  # ============================================
+  # Swaps
+  # ============================================
+  /api/v1/swaps/quote:
+    post:
+      tags: [Swaps]
+      summary: Get a swap quote via SwapVM Router (read-only)
+      operationId: getSwapQuote
+      parameters:
+        - $ref: "#/components/parameters/RequiredChainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwapOrderInput"
+      responses:
+        "200":
+          description: Quote result from SwapVM Router
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [quote]
+                properties:
+                  quote:
+                    type: object
+                    required: [amountIn, amountOut, strategyHash]
+                    properties:
+                      amountIn:
+                        $ref: "#/components/schemas/BigIntString"
+                      amountOut:
+                        $ref: "#/components/schemas/BigIntString"
+                      strategyHash:
+                        $ref: "#/components/schemas/StrategyHash"
+
+  /api/v1/swaps/prepare:
+    post:
+      tags: [Swaps]
+      summary: Get swap calldata for frontend to sign and send
+      operationId: prepareSwap
+      parameters:
+        - $ref: "#/components/parameters/RequiredChainId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwapOrderInput"
+      responses:
+        "200":
+          description: Calldata for SwapVMRouter.swap
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calldata]
+                properties:
+                  calldata:
+                    $ref: "#/components/schemas/TransactionCalldata"
+
+  /api/v1/swaps/history/{wallet}:
+    get:
+      tags: [Swaps]
+      summary: Get swap history for a taker wallet
+      operationId: getSwapHistory
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+        - $ref: "#/components/parameters/LimitFilter"
+        - name: chainId
+          in: query
+          schema:
+            $ref: "#/components/schemas/NumericChainId"
+      responses:
+        "200":
+          description: Swap history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [swaps]
+                properties:
+                  swaps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Swap"
+
+  /api/v1/swaps/recent:
+    get:
+      tags: [Swaps]
+      summary: Get recent swaps across the protocol
+      operationId: getRecentSwaps
+      parameters:
+        - $ref: "#/components/parameters/LimitFilter"
+        - name: chainId
+          in: query
+          schema:
+            $ref: "#/components/schemas/NumericChainId"
+      responses:
+        "200":
+          description: Recent swaps
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [swaps]
+                properties:
+                  swaps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Swap"
+
+  /api/v1/swaps/{id}:
+    get:
+      tags: [Swaps]
+      summary: Get swap by ID
+      operationId: getSwapById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Swap ID in format: txHash-logIndex-chainId"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Swap details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [swap]
+                properties:
+                  swap:
+                    $ref: "#/components/schemas/Swap"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/swaps/by-strategy/{hash}:
+    get:
+      tags: [Swaps]
+      summary: Get swaps executed on a specific strategy
+      operationId: getSwapsByStrategy
+      parameters:
+        - $ref: "#/components/parameters/StrategyHashPath"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Swaps for strategy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [swaps]
+                properties:
+                  swaps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Swap"
+
+  # ============================================
+  # Metrics
+  # ============================================
+  /api/v1/metrics:
+    get:
+      tags: [Metrics]
+      summary: Get protocol metrics with history
+      operationId: getMetrics
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Protocol metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProtocolMetrics"
+
+  /api/v1/metrics/tvl:
+    get:
+      tags: [Metrics]
+      summary: Get TVL metrics
+      operationId: getTVLMetrics
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+      responses:
+        "200":
+          description: TVL metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TVLMetrics"
+
+  /api/v1/metrics/volume:
+    get:
+      tags: [Metrics]
+      summary: Get volume metrics
+      operationId: getVolumeMetrics
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Volume metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolumeMetrics"
+
+  /api/v1/metrics/fees:
+    get:
+      tags: [Metrics]
+      summary: Get fee metrics
+      operationId: getFeeMetrics
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+        - name: days
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+      responses:
+        "200":
+          description: Fee metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeeMetrics"
+
+  # ============================================
+  # Tokens
+  # ============================================
+  /api/v1/tokens:
+    get:
+      tags: [Tokens]
+      summary: List supported tokens
+      operationId: listTokens
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+      responses:
+        "200":
+          description: Supported tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Token"
+
+  /api/v1/tokens/{address}:
+    get:
+      tags: [Tokens]
+      summary: Get token by address
+      operationId: getToken
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+        - $ref: "#/components/parameters/ChainFilter"
+      responses:
+        "200":
+          description: Token details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token:
+                    $ref: "#/components/schemas/Token"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/tokens/stablecoins:
+    get:
+      tags: [Tokens]
+      summary: Get stablecoin tokens
+      operationId: getStablecoins
+      parameters:
+        - $ref: "#/components/parameters/ChainFilter"
+      responses:
+        "200":
+          description: Stablecoin tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Token"
+
+  # ============================================
+  # Rebalancer
+  # ============================================
+  /api/v1/rebalancer/{wallet}:
+    get:
+      tags: [Rebalancer]
+      summary: Get rebalancer configs for all LP accounts owned by wallet
+      operationId: getRebalancerConfig
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+      responses:
+        "200":
+          description: Rebalancer configurations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lpAccounts]
+                properties:
+                  lpAccounts:
+                    type: array
+                    items:
+                      type: object
+                      required: [lpAccountAddress, chainId, config]
+                      properties:
+                        lpAccountAddress:
+                          $ref: "#/components/schemas/EthereumAddress"
+                        chainId:
+                          type: integer
+                        config:
+                          nullable: true
+                          $ref: "#/components/schemas/RebalancerConfig"
+
+  /api/v1/rebalancer/{lpAccount}:
+    put:
+      tags: [Rebalancer]
+      summary: Update rebalancer config (requires authentication)
+      operationId: updateRebalancerConfig
+      security:
+        - BasicAuth: []
+          ApiKeyAuth: []
+      parameters:
+        - name: lpAccount
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRebalancerConfig"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [config]
+                properties:
+                  config:
+                    $ref: "#/components/schemas/RebalancerConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/rebalancer/{lpAccount}/operations:
+    get:
+      tags: [Rebalancer]
+      summary: Get rebalance operation history
+      operationId: getRebalanceOperations
+      parameters:
+        - name: lpAccount
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+        - $ref: "#/components/parameters/LimitFilter"
+      responses:
+        "200":
+          description: Rebalance operations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operations]
+                properties:
+                  operations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RebalanceOperation"
+
+  /api/v1/rebalancer/{lpAccount}/pending:
+    get:
+      tags: [Rebalancer]
+      summary: Get pending rebalance operations
+      operationId: getPendingRebalances
+      parameters:
+        - name: lpAccount
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/EthereumAddress"
+      responses:
+        "200":
+          description: Pending operations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pendingOperations]
+                properties:
+                  pendingOperations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RebalanceOperation"
+
+  # ============================================
+  # Users
+  # ============================================
+  /api/v1/users/{wallet}:
+    get:
+      tags: [Users]
+      summary: Get user by wallet address
+      operationId: getUser
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, preferences]
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+                  preferences:
+                    nullable: true
+                    $ref: "#/components/schemas/UserPreferences"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/users:
+    post:
+      tags: [Users]
+      summary: Create or upsert user
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [walletAddress]
+              properties:
+                walletAddress:
+                  $ref: "#/components/schemas/EthereumAddress"
+      responses:
+        "201":
+          description: User created/updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user:
+                    $ref: "#/components/schemas/User"
+
+  /api/v1/users/{wallet}/preferences:
+    get:
+      tags: [Users]
+      summary: Get user preferences
+      operationId: getUserPreferences
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+      responses:
+        "200":
+          description: User preferences (defaults returned if none set)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preferences]
+                properties:
+                  preferences:
+                    $ref: "#/components/schemas/UserPreferences"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Users]
+      summary: Update user preferences (requires authentication)
+      operationId: updateUserPreferences
+      security:
+        - BasicAuth: []
+          ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/WalletPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePreferencesInput"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [preferences]
+                properties:
+                  preferences:
+                    $ref: "#/components/schemas/UserPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+# ============================================
+# Components
+# ============================================
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: Basic authentication for API access
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key required for /api/v1/* endpoints
+
+  parameters:
+    WalletPath:
+      name: wallet
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/EthereumAddress"
+
+    AccountAddressPath:
+      name: address
+      in: path
+      required: true
+      description: LP account contract address
+      schema:
+        $ref: "#/components/schemas/EthereumAddress"
+
+    StrategyHashPath:
+      name: hash
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/StrategyHash"
+
+    ChainFilter:
+      name: chainId
+      in: query
+      schema:
+        $ref: "#/components/schemas/NumericChainId"
+
+    RequiredChainId:
+      name: chainId
+      in: query
+      required: true
+      schema:
+        $ref: "#/components/schemas/NumericChainId"
+
+    LimitFilter:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 50
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    # ============================================
+    # Common
+    # ============================================
+    EthereumAddress:
+      type: string
+      pattern: "^0x[a-fA-F0-9]{40}$"
+      example: "0x4200000000000000000000000000000000000006"
+
+    StrategyHash:
+      type: string
+      pattern: "^0x[a-fA-F0-9]{64}$"
+      example: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+
+    ChainId:
+      type: string
+      enum: [base, unichain]
+
+    NumericChainId:
+      type: integer
+      enum: [8453, 130]
+
+    Bytes32:
+      type: string
+      pattern: "^0x[a-fA-F0-9]{64}$"
+      description: 32-byte hex value (e.g. salt, strategy hash)
+      example: "0x0000000000000000000000000000000000000000000000000000000000001234"
+
+    HexBytes:
+      type: string
+      pattern: "^0x[a-fA-F0-9]*$"
+      description: Arbitrary hex-encoded bytes
+      example: "0x170026080000000000000001"
+
+    BigIntString:
+      type: string
+      pattern: "^\\d+$"
+      description: Large integer represented as a string for JSON compatibility
+      example: "1000000000000000000"
+
+    TransactionCalldata:
+      type: object
+      required: [to, data]
+      description: Transaction calldata for the frontend to sign and send
+      properties:
+        to:
+          $ref: "#/components/schemas/EthereumAddress"
+        data:
+          type: string
+          pattern: "^0x[a-fA-F0-9]*$"
+          description: Encoded function calldata
+
+    # ============================================
+    # LP
+    # ============================================
+    AccountInfo:
+      type: object
+      required: [address, owner, swapVMRouter, rebalancerAuthorized]
+      properties:
+        address:
+          $ref: "#/components/schemas/EthereumAddress"
+        owner:
+          $ref: "#/components/schemas/EthereumAddress"
+        swapVMRouter:
+          $ref: "#/components/schemas/EthereumAddress"
+        rebalancerAuthorized:
+          type: boolean
+
+    RawBalance:
+      type: object
+      required: [token, balance, tokensCount]
+      properties:
+        token:
+          $ref: "#/components/schemas/EthereumAddress"
+        balance:
+          $ref: "#/components/schemas/BigIntString"
+        tokensCount:
+          type: integer
+          description: "Number of tokens in the strategy (255 = 0xff = docked)"
+
+    # ============================================
+    # Swap Order
+    # ============================================
+    SwapVMOrder:
+      type: object
+      required: [maker, traits, data]
+      description: SwapVM Order struct matching the on-chain ISwapVMRouter.Order
+      properties:
+        maker:
+          $ref: "#/components/schemas/EthereumAddress"
+        traits:
+          type: string
+          description: "uint256 MakerTraits as decimal string (includes USE_AQUA_BIT = 2^254)"
+        data:
+          $ref: "#/components/schemas/HexBytes"
+
+    SwapOrderInput:
+      type: object
+      required: [order, tokenIn, tokenOut, amountIn, takerData]
+      properties:
+        order:
+          $ref: "#/components/schemas/SwapVMOrder"
+        tokenIn:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenOut:
+          $ref: "#/components/schemas/EthereumAddress"
+        amountIn:
+          $ref: "#/components/schemas/BigIntString"
+        takerData:
+          $ref: "#/components/schemas/HexBytes"
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+    # ============================================
+    # Health
+    # ============================================
+    ReadinessResponse:
+      type: object
+      required: [status, timestamp, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          properties:
+            supabase:
+              $ref: "#/components/schemas/HealthCheck"
+            ponder:
+              $ref: "#/components/schemas/HealthCheck"
+            redis:
+              $ref: "#/components/schemas/HealthCheck"
+
+    HealthCheck:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency:
+          type: integer
+          description: Latency in milliseconds
+
+    Chain:
+      type: object
+      required: [id, name, displayName]
+      properties:
+        id:
+          type: integer
+          example: 8453
+        name:
+          type: string
+          example: base
+        displayName:
+          type: string
+          example: Base
+
+    # ============================================
+    # Strategies
+    # ============================================
+    StrategyType:
+      type: string
+      enum:
+        - constant_product
+        - stable_swap
+        - custom
+        - stableswap
+        - concentrated
+        - third_party_uniswap
+        - third_party_curve
+        - third_party_aerodrome
+
+    Strategy:
+      type: object
+      required: [strategyHash, chainId, isActive]
+      properties:
+        strategyHash:
+          $ref: "#/components/schemas/StrategyHash"
+        app:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenIn:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenOut:
+          $ref: "#/components/schemas/EthereumAddress"
+        chainId:
+          type: integer
+        feeBps:
+          type: integer
+        isActive:
+          type: boolean
+        registeredAt:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        strategyType:
+          $ref: "#/components/schemas/StrategyType"
+        riskLevel:
+          type: string
+          nullable: true
+        isFeatured:
+          type: boolean
+        apy24h:
+          type: number
+          nullable: true
+        apy7d:
+          type: number
+          nullable: true
+        tvlUsd:
+          type: number
+          nullable: true
+        volume24hUsd:
+          type: number
+          nullable: true
+
+    StrategyDetail:
+      allOf:
+        - $ref: "#/components/schemas/Strategy"
+        - type: object
+          properties:
+            feeRecipient:
+              $ref: "#/components/schemas/EthereumAddress"
+            bytecode:
+              type: string
+            registeredAtBlock:
+              type: string
+            registeredAtTimestamp:
+              type: string
+            amplificationFactor:
+              type: number
+              nullable: true
+            priceLower:
+              type: string
+              nullable: true
+            priceUpper:
+              type: string
+              nullable: true
+            apy30d:
+              type: number
+              nullable: true
+            supportedChains:
+              type: array
+              items:
+                type: string
+              nullable: true
+            stats:
+              nullable: true
+              $ref: "#/components/schemas/StrategyStats"
+
+    StrategyStats:
+      type: object
+      properties:
+        chainId:
+          type: integer
+        totalSwaps:
+          type: integer
+        totalVolumeIn:
+          $ref: "#/components/schemas/BigIntString"
+        totalVolumeOut:
+          $ref: "#/components/schemas/BigIntString"
+        totalFees:
+          $ref: "#/components/schemas/BigIntString"
+        activeMakers:
+          type: integer
+        totalVirtualBalance:
+          $ref: "#/components/schemas/BigIntString"
+        lastSwapTimestamp:
+          type: string
+
+    # ============================================
+    # Positions
+    # ============================================
+    Position:
+      type: object
+      required: [lpAccountAddress, strategyHash, token, chainId, balance]
+      properties:
+        lpAccountAddress:
+          $ref: "#/components/schemas/EthereumAddress"
+        owner:
+          $ref: "#/components/schemas/EthereumAddress"
+        strategyHash:
+          $ref: "#/components/schemas/StrategyHash"
+        token:
+          $ref: "#/components/schemas/EthereumAddress"
+        chainId:
+          type: integer
+        balance:
+          $ref: "#/components/schemas/BigIntString"
+        balanceUsd:
+          type: number
+          nullable: true
+        depositedUsd:
+          type: number
+          nullable: true
+        earnedFeesUsd:
+          type: number
+          nullable: true
+        pnlUsd:
+          type: number
+          nullable: true
+        pnlPercentage:
+          type: number
+          nullable: true
+        lastSyncedAt:
+          type: string
+          nullable: true
+
+    LPAccount:
+      type: object
+      required: [address, chainId, owner]
+      properties:
+        address:
+          $ref: "#/components/schemas/EthereumAddress"
+        chainId:
+          type: integer
+        owner:
+          $ref: "#/components/schemas/EthereumAddress"
+        rebalancerAuthorized:
+          type: boolean
+        rebalancerAddress:
+          $ref: "#/components/schemas/EthereumAddress"
+        createdAt:
+          type: string
+
+    PositionSummary:
+      type: object
+      required: [totalLpAccounts, totalValueUsd, totalEarnedFeesUsd, totalPnlUsd, activeStrategies]
+      properties:
+        totalLpAccounts:
+          type: integer
+        totalValueUsd:
+          type: number
+        totalEarnedFeesUsd:
+          type: number
+        totalPnlUsd:
+          type: number
+        totalSwaps:
+          type: integer
+        totalVolumeIn:
+          $ref: "#/components/schemas/BigIntString"
+        totalFeesEarned:
+          $ref: "#/components/schemas/BigIntString"
+        activeStrategies:
+          type: integer
+        chains:
+          type: array
+          items:
+            type: integer
+
+    PositionEvent:
+      type: object
+      required: [type, lpAccount, chainId, strategyHash]
+      properties:
+        type:
+          type: string
+          enum: [swap, ship, dock]
+        lpAccount:
+          $ref: "#/components/schemas/EthereumAddress"
+        chainId:
+          type: integer
+        strategyHash:
+          $ref: "#/components/schemas/StrategyHash"
+        tokenIn:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenOut:
+          $ref: "#/components/schemas/EthereumAddress"
+        amountIn:
+          $ref: "#/components/schemas/BigIntString"
+        amountOut:
+          $ref: "#/components/schemas/BigIntString"
+        lpFee:
+          $ref: "#/components/schemas/BigIntString"
+        timestamp:
+          type: string
+        txHash:
+          type: string
+
+    # ============================================
+    # Swaps
+    # ============================================
+    Swap:
+      type: object
+      required: [chainId, maker, strategyHash, tokenIn, tokenOut]
+      properties:
+        id:
+          type: string
+        chainId:
+          type: integer
+        taker:
+          $ref: "#/components/schemas/EthereumAddress"
+        maker:
+          $ref: "#/components/schemas/EthereumAddress"
+        strategyHash:
+          $ref: "#/components/schemas/StrategyHash"
+        app:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenIn:
+          $ref: "#/components/schemas/EthereumAddress"
+        tokenOut:
+          $ref: "#/components/schemas/EthereumAddress"
+        amountIn:
+          $ref: "#/components/schemas/BigIntString"
+        amountOut:
+          $ref: "#/components/schemas/BigIntString"
+        protocolFee:
+          $ref: "#/components/schemas/BigIntString"
+        lpFee:
+          $ref: "#/components/schemas/BigIntString"
+        effectivePrice:
+          type: number
+        blockNumber:
+          $ref: "#/components/schemas/BigIntString"
+        blockTimestamp:
+          $ref: "#/components/schemas/BigIntString"
+        transactionHash:
+          type: string
+
+    # ============================================
+    # Metrics
+    # ============================================
+    ProtocolMetrics:
+      type: object
+      required: [current, history]
+      properties:
+        current:
+          type: object
+          required: [totalVtvlUsd, totalVolumeUsd, totalSwaps, totalFeesUsd, chain]
+          properties:
+            totalVtvlUsd:
+              $ref: "#/components/schemas/BigIntString"
+            totalVolumeUsd:
+              $ref: "#/components/schemas/BigIntString"
+            totalSwaps:
+              type: integer
+            totalFeesUsd:
+              $ref: "#/components/schemas/BigIntString"
+            chain:
+              type: string
+            chainMetrics:
+              nullable: true
+              type: object
+              properties:
+                swapCount:
+                  type: integer
+                totalVolumeIn:
+                  $ref: "#/components/schemas/BigIntString"
+                totalVolumeOut:
+                  $ref: "#/components/schemas/BigIntString"
+                totalProtocolFees:
+                  $ref: "#/components/schemas/BigIntString"
+                totalLpFees:
+                  $ref: "#/components/schemas/BigIntString"
+                uniqueTakers:
+                  type: integer
+                uniqueMakers:
+                  type: integer
+                activeStrategies:
+                  type: integer
+                date:
+                  type: string
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              chain:
+                type: string
+              totalVtvlUsd:
+                type: number
+              tradingVolumeUsd:
+                type: number
+              swapCount:
+                type: integer
+              protocolFeesUsd:
+                type: number
+              lpFeesUsd:
+                type: number
+              activeLpAccounts:
+                type: integer
+              dailyActiveUsers:
+                type: integer
+              volumeToTvlRatio:
+                type: number
+
+    TVLMetrics:
+      type: object
+      required: [totalVtvlUsd, topStrategies]
+      properties:
+        totalVtvlUsd:
+          $ref: "#/components/schemas/BigIntString"
+        topStrategies:
+          type: array
+          items:
+            type: object
+            properties:
+              strategyHash:
+                $ref: "#/components/schemas/StrategyHash"
+              app:
+                $ref: "#/components/schemas/EthereumAddress"
+              chainId:
+                type: integer
+              totalVirtualBalance:
+                $ref: "#/components/schemas/BigIntString"
+              activeMakers:
+                type: integer
+
+    VolumeMetrics:
+      type: object
+      required: [totalVolume24h, totalVolume7d, totalVolume30d, history]
+      properties:
+        totalVolume24h:
+          type: number
+        totalVolume7d:
+          type: number
+        totalVolume30d:
+          type: number
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              chainId:
+                type: integer
+              swapCount:
+                type: integer
+              totalVolumeIn:
+                $ref: "#/components/schemas/BigIntString"
+              totalVolumeOut:
+                $ref: "#/components/schemas/BigIntString"
+
+    FeeMetrics:
+      type: object
+      required: [totalProtocolFees24h, totalLpFees24h, totalProtocolFees30d, totalLpFees30d, history]
+      properties:
+        totalProtocolFees24h:
+          type: number
+        totalLpFees24h:
+          type: number
+        totalProtocolFees30d:
+          type: number
+        totalLpFees30d:
+          type: number
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              protocolFeesUsd:
+                type: number
+              lpFeesUsd:
+                type: number
+
+    # ============================================
+    # Tokens
+    # ============================================
+    Token:
+      type: object
+      required: [address, chain, symbol, name, decimals]
+      properties:
+        id:
+          type: string
+        address:
+          $ref: "#/components/schemas/EthereumAddress"
+        chain:
+          type: string
+        symbol:
+          type: string
+          example: WETH
+        name:
+          type: string
+          example: Wrapped Ether
+        decimals:
+          type: integer
+          example: 18
+        logoUrl:
+          type: string
+          nullable: true
+        isStablecoin:
+          type: boolean
+        isNativeWrapper:
+          type: boolean
+        priceUsd:
+          type: number
+          nullable: true
+        priceUpdatedAt:
+          type: string
+          nullable: true
+
+    # ============================================
+    # Rebalancer
+    # ============================================
+    RebalancerConfig:
+      type: object
+      properties:
+        isEnabled:
+          type: boolean
+        rebalancerAddress:
+          $ref: "#/components/schemas/EthereumAddress"
+        minRebalanceAmountUsd:
+          type: number
+        maxSlippageBps:
+          type: integer
+        preferredSourceChain:
+          $ref: "#/components/schemas/ChainId"
+        minHoursBetweenRebalances:
+          type: integer
+        lastRebalanceAt:
+          type: string
+          nullable: true
+
+    UpdateRebalancerConfig:
+      type: object
+      properties:
+        isEnabled:
+          type: boolean
+        rebalancerAddress:
+          $ref: "#/components/schemas/EthereumAddress"
+        minRebalanceAmountUsd:
+          type: number
+          minimum: 0
+        maxSlippageBps:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        preferredSourceChain:
+          $ref: "#/components/schemas/ChainId"
+        minHoursBetweenRebalances:
+          type: integer
+          minimum: 1
+          maximum: 168
+
+    RebalanceOperation:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+        maker:
+          $ref: "#/components/schemas/EthereumAddress"
+        srcChainId:
+          type: integer
+        dstChainId:
+          type: integer
+        token:
+          $ref: "#/components/schemas/EthereumAddress"
+        amount:
+          $ref: "#/components/schemas/BigIntString"
+        status:
+          type: string
+          enum: [pending, docked, bridging, completed, failed]
+        initiatedAt:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+        srcTxHash:
+          type: string
+          nullable: true
+        dstTxHash:
+          type: string
+          nullable: true
+        lzSentGuid:
+          type: string
+          nullable: true
+        stargateSentId:
+          type: string
+          nullable: true
+
+    # ============================================
+    # Users
+    # ============================================
+    User:
+      type: object
+      required: [id, walletAddress, createdAt]
+      properties:
+        id:
+          type: string
+        walletAddress:
+          $ref: "#/components/schemas/EthereumAddress"
+        worldIdVerified:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+
+    UserPreferences:
+      type: object
+      properties:
+        defaultSlippageBps:
+          type: integer
+          example: 50
+        preferredChains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChainId"
+          example: [base]
+        theme:
+          type: string
+          enum: [light, dark]
+          example: dark
+        notificationsEnabled:
+          type: boolean
+          example: true
+        notificationEmail:
+          type: string
+          format: email
+          nullable: true
+
+    UpdatePreferencesInput:
+      type: object
+      properties:
+        defaultSlippageBps:
+          type: integer
+          minimum: 1
+          maximum: 5000
+        preferredChains:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChainId"
+        theme:
+          type: string
+          enum: [light, dark]
+        notificationsEnabled:
+          type: boolean
+        notificationEmail:
+          type: string
+          format: email

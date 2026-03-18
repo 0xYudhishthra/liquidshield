@@ -1,0 +1,35 @@
+{
+  "name": "@aqua0/backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aqua0 Backend - API server and Ponder indexer",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json}\"",
+    "clean": "pnpm -r clean && rm -rf node_modules",
+    "dev:local": "bash scripts/start-local.sh",
+    "test:integration": "pnpm --filter api bun test src/tests/integration/",
+    "e2e:cctp": "bun run scripts/e2e-cctp-bridge.ts",
+    "e2e:cctp:reverse": "DIRECTION=unichain-to-base bun run scripts/e2e-cctp-bridge.ts",
+    "e2e:stargate": "bun run scripts/e2e-stargate-bridge.ts",
+    "e2e:stargate:reverse": "DIRECTION=unichain-to-base bun run scripts/e2e-stargate-bridge.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "prettier": "^3.4.2",
+    "turbo": "^2.8.5",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "dependencies": {
+    "@aqua0/shared": "workspace:^",
+    "viem": "^2.21.54"
+  }
+}
