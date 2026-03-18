@@ -2,5 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { --background: #0f0f1a; --foreground: #e2e8f0; }
-body { background: var(--background); color: var(--foreground); }
+:root {
+  --background: #000000;
+  --foreground: #fafafa;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Button wipe effect (from Aqua0) */
+.btn-wipe {
+  position: relative;
+  overflow: hidden;
+  transition: color 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+}
+.btn-wipe::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+}
+.btn-wipe:hover::before {
+  transform: scaleX(1);
+}
+.btn-wipe-white::before {
+  background: white;
+}
+.btn-wipe-white:hover {
+  color: black;
+}
+.btn-wipe-dark::before {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Shield glow effect */
+.shield-glow {
+  box-shadow: 0 0 60px rgba(59, 130, 246, 0.08), 0 0 120px rgba(59, 130, 246, 0.04);
+}

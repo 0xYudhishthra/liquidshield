@@ -10,8 +10,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@fontsource/space-grotesk": "^5.2.10",
     "@rainbow-me/rainbowkit": "^2.1.0",
     "@tanstack/react-query": "^5.50.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.577.0",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
