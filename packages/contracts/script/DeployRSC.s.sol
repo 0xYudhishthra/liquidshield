@@ -5,19 +5,29 @@ import "forge-std/Script.sol";
 import {PositionMonitor} from "../src/rsc/PositionMonitor.sol";
 
 /// @notice Deploys PositionMonitor RSC on Reactive Network Lasna testnet
-/// @dev Usage: forge script script/DeployRSC.s.sol --broadcast --rpc-url reactive_lasna
+/// @dev Usage: DEFENSE_CALLBACK_ADDRESS=0x... LENDING_PROTOCOL=0x... SOURCE_CHAIN_ID=84532 \
+///       forge script script/DeployRSC.s.sol:DeployRSC --broadcast --rpc-url reactive_lasna
 contract DeployRSC is Script {
-    /// @dev Unichain Sepolia chain ID
     uint256 constant UNICHAIN_CHAIN_ID = 1301;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address callbackAddress = vm.envAddress("DEFENSE_CALLBACK_ADDRESS");
+        address lendingProtocol = vm.envAddress("LENDING_PROTOCOL");
+        uint256 sourceChainId = vm.envUint("SOURCE_CHAIN_ID");
 
         vm.startBroadcast(deployerPrivateKey);
 
-        PositionMonitor monitor = new PositionMonitor{value: 0.1 ether}(callbackAddress, UNICHAIN_CHAIN_ID);
+        PositionMonitor monitor = new PositionMonitor{value: 1 ether}(
+            callbackAddress,
+            UNICHAIN_CHAIN_ID,
+            lendingProtocol,
+            sourceChainId
+        );
         console.log("PositionMonitor (RSC) deployed:", address(monitor));
+        console.log("  Monitoring:", lendingProtocol);
+        console.log("  Source chain:", sourceChainId);
+        console.log("  Callback receiver:", callbackAddress);
 
         vm.stopBroadcast();
 

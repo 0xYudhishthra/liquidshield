@@ -62,14 +62,33 @@ contract PositionMonitor is IReactive, AbstractReactive {
 
     // ============ CONSTRUCTOR ============
 
-    /// @notice Deploys the position monitor RSC
+    /// @notice Deploys the position monitor RSC with initial subscription
     /// @param _callbackReceiver Address of DefenseCallback contract on Unichain
     /// @param _unichainChainId Chain ID of Unichain for callback routing
-    constructor(address _callbackReceiver, uint256 _unichainChainId) payable {
+    /// @param _lendingProtocol Address of the lending protocol to monitor (e.g., Aave Pool)
+    /// @param _sourceChainId Chain ID of the source chain (e.g., 84532 for Base Sepolia)
+    constructor(
+        address _callbackReceiver,
+        uint256 _unichainChainId,
+        address _lendingProtocol,
+        uint256 _sourceChainId
+    ) payable {
         require(_callbackReceiver != address(0), "Zero callback receiver");
         callbackReceiver = _callbackReceiver;
         unichainChainId = _unichainChainId;
         owner = msg.sender;
+
+        // Subscribe in constructor — required by Reactive Network
+        if (!vm) {
+            service.subscribe(
+                _sourceChainId,
+                _lendingProtocol,
+                RESERVE_DATA_UPDATED_TOPIC,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE,
+                REACTIVE_IGNORE
+            );
+        }
     }
 
     // ============ EXTERNAL FUNCTIONS ============

@@ -51,7 +51,7 @@ contract PositionMonitorTest is Test {
         vm.etch(SERVICE_ADDR, address(mockService).code);
 
         // Deploy PositionMonitor (on Reactive Network — SERVICE_ADDR has code, so vm=false)
-        monitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+        monitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID, lendingProtocol, 421614);
     }
 
     // Helper: create a LogRecord for testing react()
@@ -84,7 +84,7 @@ contract PositionMonitorTest is Test {
 
     function test_constructor_revertsWhenZeroReceiver() public {
         vm.expectRevert("Zero callback receiver");
-        new PositionMonitor(address(0), UNICHAIN_CHAIN_ID);
+        new PositionMonitor(address(0), UNICHAIN_CHAIN_ID, lendingProtocol, 421614);
     }
 
     // ================================================================
@@ -181,7 +181,7 @@ contract PositionMonitorTest is Test {
         vm.etch(SERVICE_ADDR, "");
 
         // Re-deploy in VM context (vm=true because SERVICE_ADDR has no code)
-        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID, lendingProtocol, 421614);
         // Re-register position (new instance)
         vmMonitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
@@ -200,7 +200,7 @@ contract PositionMonitorTest is Test {
 
         // Deploy in VM context
         vm.etch(SERVICE_ADDR, "");
-        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID);
+        PositionMonitor vmMonitor = new PositionMonitor(callbackReceiver, UNICHAIN_CHAIN_ID, lendingProtocol, 421614);
         vmMonitor.startMonitoring(posId, user, lendingProtocol, 421614, threshold);
 
         IReactive.LogRecord memory log = _makeLogRecord(lendingProtocol);
