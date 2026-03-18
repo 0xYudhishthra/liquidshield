@@ -1,10 +1,8 @@
 {
   "chainId": 5318007,
   "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
-  "positionMonitor": "0x9A2F9F1D3c4FeEa4bd2fcc8E4e0F494F24E2b3b5",
+  "positionMonitor": "0x86cD714b0ad55E757C0204950DfC38d0959246FB",
   "healthChecker": "0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038",
-  "defenseCallback": "0xa83c265635257060EfE753b19467844d10c15F48",
-  "callbackProxyUnichain": "0x9299472A6399Fd1027ebF067571Eb3e3D7837FC4",
-  "callbackProxyBaseSepolia": "0xa6eA49Ed671B8a4dfCDd34E36b7a75Ac79B8A5a6",
-  "positionId": "0x59394006b7e7f369dfab0de5e324ee46bccc80aaff9a9e057be7b4cb18eb6562"
+  "defenseCallback": "0xa83E9240221e66f58665fef54F653f0a89E70B75",
+  "positionId": "0xc9e3acddafbde33e27b7270578d3d3fe5d006976fa08a4448424bb0f893ae4bf"
 }
