@@ -1,0 +1,29 @@
+{
+  "chainId": 1301,
+  "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
+  "poolManager": "0x00B036B58a818B1BC34d502D3fE730Db729e62AC",
+  "sharedLiquidityPool": "0x3293BA3287C602411Bf371896BCba9C80e3a04FF",
+  "hook": "0x008E3fDE34a243F1aa18CC0f381040063eCC95C0",
+  "settler": "0xF540054007966371d338D337d73A08A34649aB76",
+  "router": "0xdf9aE57790c9c26AD5f0D986267216d9E8d8Cc9E",
+  "tokens": {
+    "mWETH": "0x35287bB8cdD9aC398a528978dcbCdd0394C1D1D8",
+    "mUSDC": "0xd1e85257990B8f8BCD7Ce8196E4bd61276BB65EF"
+  },
+  "pools": {
+    "mWETH_mUSDC_1to1": {
+      "token0": "0x35287bB8cdD9aC398a528978dcbCdd0394C1D1D8",
+      "token1": "0xd1e85257990B8f8BCD7Ce8196E4bd61276BB65EF",
+      "fee": "0x800000",
+      "tickSpacing": 60,
+      "price": "1:1"
+    },
+    "mWETH_mUSDC_2000": {
+      "token0": "0x35287bB8cdD9aC398a528978dcbCdd0394C1D1D8",
+      "token1": "0xd1e85257990B8f8BCD7Ce8196E4bd61276BB65EF",
+      "fee": "0x800000",
+      "tickSpacing": 10,
+      "price": "1 ETH = 2000 USDC"
+    }
+  }
+}
