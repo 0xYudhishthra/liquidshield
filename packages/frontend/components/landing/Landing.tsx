@@ -13,9 +13,7 @@ export function Landing() {
       {/* Header */}
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 sm:px-8 py-4 bg-black/80 backdrop-blur-md border-b border-white/[0.06]">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 border border-white/20 rotate-45 flex items-center justify-center">
-            <div className="w-3 h-3 bg-blue-500/60 rotate-0" />
-          </div>
+          <img src="/logo.svg" alt="LiquidShield" className="w-7 h-7" />
           <span className="text-[15px] font-bold tracking-wide text-white">
             LiquidShield
           </span>
@@ -44,9 +42,7 @@ export function Landing() {
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <div className="w-4 h-4 border border-white/20 rotate-45 flex items-center justify-center">
-                <div className="w-2 h-2 bg-blue-500/40" />
-              </div>
+              <img src="/logo.svg" alt="LiquidShield" className="w-5 h-5 opacity-50" />
               <span className="text-sm font-bold text-white/50">
                 LiquidShield
               </span>

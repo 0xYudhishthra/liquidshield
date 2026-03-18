@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   title: "LiquidShield — Never Get Liquidated Again",
   description:
     "Cross-chain liquidation defense hook for Uniswap v4 on Unichain. Monitors lending positions across chains and executes preemptive defense strategies before liquidation occurs.",
+  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({

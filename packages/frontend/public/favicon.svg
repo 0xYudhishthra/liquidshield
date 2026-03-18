@@ -1,0 +1,8 @@
+<svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M20 2L4 10V22C4 31.5 11 37.5 20 39C29 37.5 36 31.5 36 22V10L20 2Z" fill="#0a0a0a" stroke="white" stroke-width="2" stroke-opacity="0.3"/>
+  <clipPath id="sc"><path d="M20 2L4 10V22C4 31.5 11 37.5 20 39C29 37.5 36 31.5 36 22V10L20 2Z"/></clipPath>
+  <g clip-path="url(#sc)">
+    <path d="M0 24C8 20 14 26 20 22C26 18 32 24 40 20V42H0Z" fill="#3b82f6" opacity="0.5"/>
+    <path d="M0 28C8 24 14 30 20 26C26 22 32 28 40 24V42H0Z" fill="#3b82f6" opacity="0.8"/>
+  </g>
+</svg>

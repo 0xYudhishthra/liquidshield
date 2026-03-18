@@ -1,0 +1,21 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Shield outline -->
+  <path d="M20 2L4 10V22C4 31.5 11 37.5 20 39C29 37.5 36 31.5 36 22V10L20 2Z" stroke="white" stroke-width="1.5" stroke-opacity="0.3" fill="none"/>
+  <!-- Liquid wave fill (bottom half of shield) -->
+  <clipPath id="shieldClip">
+    <path d="M20 2L4 10V22C4 31.5 11 37.5 20 39C29 37.5 36 31.5 36 22V10L20 2Z"/>
+  </clipPath>
+  <g clip-path="url(#shieldClip)">
+    <!-- Wave -->
+    <path d="M0 22C6 19 10 24 16 21C22 18 26 23 32 20C38 17 42 22 42 22V42H0V22Z" fill="url(#waveGrad)" opacity="0.5"/>
+    <path d="M0 26C6 23 10 28 16 25C22 22 26 27 32 24C38 21 42 26 42 26V42H0V26Z" fill="url(#waveGrad)" opacity="0.8"/>
+  </g>
+  <!-- Inner shield accent line -->
+  <path d="M20 7L9 13V22C9 28.5 13.5 33.5 20 35C26.5 33.5 31 28.5 31 22V13L20 7Z" stroke="white" stroke-width="0.5" stroke-opacity="0.1" fill="none"/>
+  <defs>
+    <linearGradient id="waveGrad" x1="0" y1="20" x2="40" y2="40">
+      <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0.4"/>
+    </linearGradient>
+  </defs>
+</svg>
