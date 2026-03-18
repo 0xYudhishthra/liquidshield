@@ -12,9 +12,10 @@
 
 ## Key Features
 
-- **Cross-Chain Defense**: Monitors positions on Aave (Arbitrum) and Morpho (Ethereum) from Unichain
+- **Cross-Chain Defense**: Monitors Aave V3 positions on Base Sepolia via Reactive Network, triggers defense from Unichain
 - **v4-Native Architecture**: ERC-6909 defense reserve with atomic burn/take/donate — every delta resolves to zero
-- **Dual Adapter Pattern**: `AaveV3Adapter` (collateral top-up) + `MorphoBlueAdapter` (batched gradual unwind) — proving protocol-agnostic extensibility
+- **Two-Hop RSC Architecture**: CRON → HealthChecker reads Aave health on-chain → HealthDanger event → RSC → DefenseCallback on Unichain
+- **Extensible Adapter Pattern**: `AaveV3Adapter` (batched gradual unwind) deployed + `MorphoBlueAdapter` included with tests — protocol-agnostic
 - **Sub-Second Reaction**: Flashblocks (200ms preconfirmation) + TEE priority ordering = ~400ms detection-to-defense
 - **Non-Custodial**: Approval-based delegation lets the executor act on behalf of user's EOA without custody (EIP-7702 production target)
 - **Novel LP Yield**: "Liquidation insurance yield" = swap fees + protection premiums + defense execution fees
@@ -35,46 +36,45 @@ No automated, non-custodial defense layer exists that works across chains.
 
 ```mermaid
 graph TB
-    subgraph UNICHAIN["UNICHAIN (v4 + Flashblocks)"]
-        Pool["USDC/WETH Pool<br/>Swap fees for LPs<br/>Premium donations via donate()"]
-        Hook["LiquidShieldHook.sol<br/>ERC-6909 Defense Reserve<br/>triggerDefense() → burn/take<br/>settleDefense() → replenish<br/>beforeSwap() → dynamic fees"]
+    subgraph UNICHAIN["UNICHAIN SEPOLIA (v4 + Flashblocks)"]
+        Pool["mWETH/mUSDC Pool<br/>Swap fees + JIT liquidity (Aqua0)<br/>Premium donations via donate()"]
+        Hook["LiquidShieldHook<br/>ERC-6909 Defense Reserve<br/>triggerDefense() → burn/take<br/>settleDefense() → replenish<br/>beforeSwap() → dynamic fees"]
         Router["LiquidShieldRouter<br/>User Registration & Premiums"]
         Settler["LiquidShieldSettler<br/>IOriginSettler (ERC-7683)"]
+        Callback["DefenseCallback<br/>Receives RSC callbacks<br/>Forwards to Hook"]
         Pool <--> Hook
         Router --> Hook
+        Callback --> Hook
         Hook --> Settler
     end
 
-    subgraph REACTIVE["REACTIVE NETWORK"]
-        RSC["PositionMonitor.sol (RSC)<br/>Subscribe to lending events<br/>Monitor health factors<br/>Trigger cross-chain callback"]
+    subgraph REACTIVE["REACTIVE NETWORK (Lasna)"]
+        RSC["PositionMonitor (RSC)<br/>CRON subscription (every 10 blocks)<br/>HealthDanger event subscription<br/>Two-hop callback routing"]
     end
 
-    subgraph ARB["ARBITRUM SEPOLIA"]
-        Executor1["DefenseExecutor"]
-        Aave["AaveV3Adapter<br/>Collateral Top-Up"]
-        Executor1 --> Aave
-    end
-
-    subgraph ETH["ETHEREUM SEPOLIA"]
-        Executor2["DefenseExecutor"]
-        Morpho["MorphoBlueAdapter<br/>Batched Gradual Unwind"]
-        Executor2 --> Morpho
+    subgraph BASE["BASE SEPOLIA"]
+        HC["HealthChecker<br/>Reads Aave getUserAccountData()<br/>Emits HealthDanger if HF < threshold"]
+        Executor["DefenseExecutor"]
+        Aave["AaveV3Adapter<br/>Batched Gradual Unwind"]
+        AavePool["Aave V3 Pool<br/>(Real lending position)"]
+        HC --> AavePool
+        Executor --> Aave
+        Aave --> AavePool
     end
 
     subgraph FILLER["FILLER SERVICE"]
-        Watcher["Watch intents"]
-        Fill["Fill on source chain"]
+        Watcher["Watch OrderOpened events"]
+        Fill["Execute defense on Base Sepolia"]
         Settle["Settle back on Unichain"]
         Watcher --> Fill --> Settle
     end
 
-    RSC -- "native callback" --> Hook
-    RSC -. "subscribes to events" .-> Aave
-    RSC -. "subscribes to events" .-> Morpho
+    RSC -- "Hop 1: CRON callback" --> HC
+    HC -. "emits HealthDanger" .-> RSC
+    RSC -- "Hop 2: defense callback" --> Callback
     Settler -- "ERC-7683 intent" --> Watcher
     Settle -- "settlement" --> Hook
-    Fill --> Executor1
-    Fill --> Executor2
+    Fill --> Executor
 ```
 
 ---
@@ -103,17 +103,19 @@ Users register their lending positions (Aave or Morpho) by calling `registerAndP
 
 ### Phase 3: Cross-Chain Monitoring
 
-Reactive Smart Contracts (RSCs) on Reactive Network subscribe to lending protocol events across Arbitrum and Ethereum. When a health factor drops below the user's configured threshold, the RSC triggers a callback to the hook on Unichain.
+A Reactive Smart Contract (RSC) on Reactive Network's Lasna testnet periodically triggers a HealthChecker on Base Sepolia via CRON callbacks. The HealthChecker reads the user's health factor directly from Aave V3 on-chain. When health drops below the configured threshold, it emits a `HealthDanger` event. The RSC detects this and triggers a defense callback to Unichain.
 
 ### Phase 4: Defense Execution
 
-1. RSC callback hits `triggerDefense()` on the hook
-2. Hook calls `poolManager.unlock()` — enters flash accounting context
-3. Inside callback: `burn()` ERC-6909 claims (+delta) → `take()` tokens (-delta) → **deltas = 0** ✓
-4. Hook calls Settler to emit `ERC-7683 GaslessCrossChainOrder` with extracted defense capital
-5. Filler picks up intent, fills on source chain via `DefenseExecutor`
-6. Lending adapter executes strategy (collateral top-up or batched gradual unwind)
-7. Filler settles back on Unichain → hook reserve replenished, 1.5% fee charged
+1. RSC's Hop 2 callback hits `DefenseCallback` on Unichain (first param is `address` for RVM ID overwrite)
+2. `DefenseCallback` forwards to `hook.triggerDefense(positionId, currentHealth)`
+3. Hook calls `poolManager.unlock()` — enters flash accounting context
+4. Inside callback: `burn()` ERC-6909 claims (+delta) → `take()` tokens (-delta) → **deltas = 0** ✓
+5. Hook calls Settler to emit `ERC-7683 GaslessCrossChainOrder` with extracted defense capital
+6. Filler watcher detects `OrderOpened` event on Settler, decodes intent parameters
+7. Filler executor calls `DefenseExecutor.executeDefense()` on Base Sepolia with strategy=1 (batched unwind)
+8. `AaveV3Adapter` executes the unwind strategy on Aave V3
+9. Filler settles back on Unichain via `Settler.settle()` → hook reserve replenished, 1.5% fee charged
 
 ### Phase 5: LP Rewards
 
@@ -385,11 +387,12 @@ forge test --match-contract FullDefenseFlowTest       # End-to-end integration (
 **[Watch on Loom](LOOM_LINK_HERE)** — under 5 minutes
 
 The demo shows:
-1. **Aave Defense** (Arbitrum): Register position → simulate price drop → collateral top-up → health factor recovered
-2. **Morpho Defense** (Ethereum): Register position → simulate severe drop → batched gradual unwind → position gracefully unwound
-3. **Architecture walkthrough**: v4 hook + RSC + ERC-7683 + adapter pattern
+1. **Landing page walkthrough**: Problem, solution, architecture — with live frontend
+2. **Position detection**: Connect wallet → detect Aave V3 position on Base Sepolia → show health factor
+3. **Defense trigger**: Reactive Network RSC detects low health → two-hop callback → hook extracts ERC-6909 capital → ERC-7683 intent emitted
+4. **Batched unwind**: Filler executes defense on Base Sepolia via AaveV3Adapter
 
-> One USDC/WETH pool. Two lending protocols. Two defense strategies. Two chains. Every delta resolves to zero.
+> One mWETH/mUSDC pool on Unichain. Aave V3 on Base Sepolia. Reactive Network monitoring. Every delta resolves to zero.
 
 ---
 
