@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Hero } from "./Hero";
 import { InfoTabs } from "./InfoTabs";
@@ -13,6 +13,9 @@ interface LandingProps {
 }
 
 export function Landing({ isConnected, address }: LandingProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const showConnected = mounted && isConnected;
   return (
     <main className="min-h-screen bg-black">
       {/* Header */}
@@ -40,7 +43,7 @@ export function Landing({ isConnected, address }: LandingProps) {
       <Hero isConnected={isConnected} />
 
       {/* Position Scanner — right below hero when connected */}
-      {isConnected && address && (
+      {showConnected && address && (
         <PositionScanner address={address} />
       )}
 

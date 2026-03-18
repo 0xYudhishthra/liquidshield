@@ -2,12 +2,16 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 
 interface HeroProps {
   isConnected: boolean;
 }
 
 export function Hero({ isConnected }: HeroProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const showConnected = mounted && isConnected;
   return (
     <section className="relative min-h-[80vh] flex flex-col items-center justify-center px-4 sm:px-6 pt-20 overflow-hidden">
       {/* Subtle grid background */}
@@ -45,7 +49,7 @@ export function Hero({ isConnected }: HeroProps) {
 
         {/* Two clear CTAs */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-6">
-          {isConnected ? (
+          {showConnected ? (
             <a
               href="#protect"
               className="btn-wipe btn-wipe-white relative px-8 py-3 bg-white text-black text-sm font-semibold tracking-wide hover:text-white transition-colors"
