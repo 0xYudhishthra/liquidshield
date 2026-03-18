@@ -29,6 +29,10 @@ contract DeployAll is Script {
         // Phase 1-2: Deploy Hook via CREATE2
         LiquidShieldHook hook = _deployHook(deployer, sharedPoolAddr);
 
+        // Phase 2b: Register hook on SharedLiquidityPool
+        SharedLiquidityPool(sharedPoolAddr).setHook(address(hook));
+        console.log("Hook registered on SharedLiquidityPool");
+
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));
         LiquidShieldRouter router = new LiquidShieldRouter(address(hook));
