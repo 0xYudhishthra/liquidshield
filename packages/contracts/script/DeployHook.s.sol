@@ -11,7 +11,7 @@ import {SharedLiquidityPool} from "../src/aqua0/SharedLiquidityPool.sol";
 
 /// @notice Deploys LiquidShieldHook (with CREATE2 salt mining), Settler, and Router to Unichain Sepolia
 contract DeployHook is Script {
-    address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
+    address constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");

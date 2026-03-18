@@ -17,21 +17,32 @@ import {SharedLiquidityPool} from "../src/aqua0/SharedLiquidityPool.sol";
 /// @notice Single deployment script for all Unichain contracts: Hook + Settler + Router + Pool + Config + Seed
 /// @dev Usage: forge script script/DeployAll.s.sol --broadcast --rpc-url unichain_sepolia
 contract DeployAll is Script {
-    address constant POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
+    // Aqua0's PoolManager on Unichain Sepolia (from contracts-hookathon deployments)
+    address constant POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
 
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
-        address sharedPoolAddr = vm.envAddress("SHARED_LIQUIDITY_POOL");
+        address sharedPoolAddr = vm.envOr("SHARED_LIQUIDITY_POOL", address(0));
 
         vm.startBroadcast(deployerPrivateKey);
+
+        // Phase 0: Deploy SharedLiquidityPool if not provided or if we can't setHook
+        if (sharedPoolAddr == address(0)) {
+            SharedLiquidityPool newPool = new SharedLiquidityPool(deployer);
+            sharedPoolAddr = address(newPool);
+            console.log("SharedLiquidityPool deployed:", sharedPoolAddr);
+        }
 
         // Phase 1-2: Deploy Hook via CREATE2
         LiquidShieldHook hook = _deployHook(deployer, sharedPoolAddr);
 
-        // Phase 2b: Register hook on SharedLiquidityPool
-        SharedLiquidityPool(sharedPoolAddr).setHook(address(hook));
-        console.log("Hook registered on SharedLiquidityPool");
+        // Phase 2b: Register hook on SharedLiquidityPool (only if we're the owner)
+        try SharedLiquidityPool(payable(sharedPoolAddr)).setHook(address(hook)) {
+            console.log("Hook registered on SharedLiquidityPool");
+        } catch {
+            console.log("WARNING: Could not setHook - not the owner. Ask the pool owner to call setHook(", vm.toString(address(hook)), ")");
+        }
 
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));
