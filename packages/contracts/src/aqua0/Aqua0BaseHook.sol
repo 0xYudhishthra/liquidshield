@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity >=0.8.34;
 
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -22,11 +22,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     SafeERC20
 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {SharedLiquidityPool} from "./SharedLiquidityPool.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IAqua0BaseHookMarker} from "./IAqua0BaseHookMarker.sol";
+import {SharedLiquidityPool} from "./SharedLiquidityPool.sol";
 import {
     TransientStateLibrary
 } from "v4-core/src/libraries/TransientStateLibrary.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {console} from "forge-std/console.sol";
 
 /// @title Aqua0BaseHook
@@ -39,6 +41,7 @@ abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
     using TransientStateLibrary for IPoolManager;
+    using StateLibrary for IPoolManager;
 
     // ─── Immutables ───────────────────────────────────────────────────────────
 
@@ -90,10 +93,12 @@ abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
 
     // ─── ERC165 ──────────────────────────────────────────────────────────────
 
+    /// @inheritdoc IAqua0BaseHookMarker
     function isAqua0BaseHook() external pure returns (bool) {
         return true;
     }
 
+    /// @inheritdoc IERC165
     function supportsInterface(bytes4 interfaceId) public view virtual returns (bool) {
         return interfaceId == type(IAqua0BaseHookMarker).interfaceId;
     }
@@ -174,9 +179,10 @@ abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
     /// @dev Call this early inside `afterSwap` of your custom hook. Returns true if there were ranges to remove.
     /// @param key The pool key for the current swap
     /// @return hasJIT True if virtual liquidity was present and removed, false otherwise
+    /// @return lpFee The dynamically active LP fee at the time of the swap
     function _removeVirtualLiquidity(
         PoolKey calldata key
-    ) internal returns (bool hasJIT) {
+    ) internal returns (bool hasJIT, uint24 lpFee) {
         PoolId poolId = key.toId();
 
         console.log("\n[Aqua0BaseHook] AFTER SWAP");
@@ -189,7 +195,7 @@ abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
 
         if (rangeCount == 0) {
             console.log("  No JIT positions - nothing to remove/settle");
-            return false;
+            return (false, 0);
         }
 
         SharedLiquidityPool.RangeInfo[]
@@ -200,74 +206,73 @@ abstract contract Aqua0BaseHook is IAqua0BaseHookMarker {
         BalanceDelta[] memory burnDeltas = new BalanceDelta[](rangeCount);
 
         for (uint256 i = 0; i < rangeCount; i++) {
-            (injectedRanges[i], mintDeltas[i], burnDeltas[i]) = _removeOneRange(key, poolId, i);
+            int24 tickLower;
+            int24 tickUpper;
+            uint128 totalLiquidity;
+            BalanceDelta mintDelta;
+
+            bytes32 ptrMint = keccak256(abi.encode(poolId, "mintDelta", i));
+            bytes32 ptrLower = keccak256(abi.encode(poolId, "tickLower", i));
+            bytes32 ptrUpper = keccak256(abi.encode(poolId, "tickUpper", i));
+            bytes32 ptrLiq = keccak256(abi.encode(poolId, "liquidity", i));
+
+            int256 callerDeltaInt;
+            int256 tickLowerInt;
+            int256 tickUpperInt;
+            uint256 liquidityUint;
+
+            // Read transiently stored data
+            assembly {
+                tickLowerInt := tload(ptrLower)
+                tickUpperInt := tload(ptrUpper)
+                liquidityUint := tload(ptrLiq)
+                callerDeltaInt := tload(ptrMint)
+            }
+
+            tickLower = int24(tickLowerInt);
+            tickUpper = int24(tickUpperInt);
+            totalLiquidity = uint128(liquidityUint);
+            mintDelta = BalanceDelta.wrap(callerDeltaInt);
+
+            injectedRanges[i] = SharedLiquidityPool.RangeInfo({
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                totalLiquidity: totalLiquidity
+            });
+            mintDeltas[i] = mintDelta;
+
+            (BalanceDelta callerDelta, ) = poolManager.modifyLiquidity(
+                key,
+                ModifyLiquidityParams({
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    liquidityDelta: -int256(uint256(totalLiquidity)),
+                    salt: bytes32(0)
+                }),
+                ""
+            );
+
+            burnDeltas[i] = callerDelta;
+
+            emit VirtualLiquidityRemoved(
+                poolId,
+                tickLower,
+                tickUpper,
+                totalLiquidity
+            );
+            console.log("  [-] Removed JIT liquidity");
+            console.log("      tickLower:", tickLower);
+            console.log("      tickUpper:", tickUpper);
+            console.log("      liquidity:", totalLiquidity);
         }
+
+        // Read the pool's current active LP Fee (needed to isolate swap fees from principle shift)
+        (, , , lpFee) = poolManager.getSlot0(poolId);
 
         // Accurately distribute exact PnL to overlapping users based on their scale
-        sharedPool.postSwap(key, injectedRanges, mintDeltas, burnDeltas);
+        sharedPool.postSwap(key, injectedRanges, mintDeltas, burnDeltas, lpFee);
 
-        return true;
-    }
-
-    function _removeOneRange(
-        PoolKey calldata key,
-        PoolId poolId,
-        uint256 i
-    ) private returns (
-        SharedLiquidityPool.RangeInfo memory rangeInfo,
-        BalanceDelta mintDelta,
-        BalanceDelta burnDelta
-    ) {
-        // Load all transient data into a struct to reduce stack pressure
-        rangeInfo = _loadTransientRange(poolId, i);
-        mintDelta = _loadTransientMintDelta(poolId, i);
-
-        (BalanceDelta callerDelta, ) = poolManager.modifyLiquidity(
-            key,
-            ModifyLiquidityParams({
-                tickLower: rangeInfo.tickLower,
-                tickUpper: rangeInfo.tickUpper,
-                liquidityDelta: -int256(uint256(rangeInfo.totalLiquidity)),
-                salt: bytes32(0)
-            }),
-            ""
-        );
-
-        burnDelta = callerDelta;
-
-        emit VirtualLiquidityRemoved(poolId, rangeInfo.tickLower, rangeInfo.tickUpper, rangeInfo.totalLiquidity);
-        console.log("  [-] Removed JIT liquidity");
-    }
-
-    function _loadTransientRange(PoolId poolId, uint256 i) private view returns (SharedLiquidityPool.RangeInfo memory) {
-        bytes32 ptrLower = keccak256(abi.encode(poolId, "tickLower", i));
-        bytes32 ptrUpper = keccak256(abi.encode(poolId, "tickUpper", i));
-        bytes32 ptrLiq = keccak256(abi.encode(poolId, "liquidity", i));
-
-        int256 tickLowerInt;
-        int256 tickUpperInt;
-        uint256 liquidityUint;
-
-        assembly {
-            tickLowerInt := tload(ptrLower)
-            tickUpperInt := tload(ptrUpper)
-            liquidityUint := tload(ptrLiq)
-        }
-
-        return SharedLiquidityPool.RangeInfo({
-            tickLower: int24(tickLowerInt),
-            tickUpper: int24(tickUpperInt),
-            totalLiquidity: uint128(liquidityUint)
-        });
-    }
-
-    function _loadTransientMintDelta(PoolId poolId, uint256 i) private view returns (BalanceDelta) {
-        bytes32 ptrMint = keccak256(abi.encode(poolId, "mintDelta", i));
-        int256 callerDeltaInt;
-        assembly {
-            callerDeltaInt := tload(ptrMint)
-        }
-        return BalanceDelta.wrap(callerDeltaInt);
+        return (true, lpFee);
     }
 
     /// @notice Settle the net token deltas derived from Aqua0's virtual liquidity operations.

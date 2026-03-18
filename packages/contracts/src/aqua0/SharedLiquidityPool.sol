@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity >=0.8.34;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {
@@ -17,6 +17,7 @@ import {
     BalanceDeltaLibrary
 } from "v4-core/src/types/BalanceDelta.sol";
 import {console} from "forge-std/console.sol";
+import {IAqua0BaseHookMarker} from "./IAqua0BaseHookMarker.sol";
 
 /// @title SharedLiquidityPool
 /// @author Aqua0 Team
@@ -58,11 +59,11 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
 
     // ─── State ───────────────────────────────────────────────────────────────
 
-    /// @notice The registered Aqua0Hook address - only hook can call settleSwapDelta
-    address public hook;
-
     /// @notice user => token => free (unallocated) balance
     mapping(address => mapping(address => uint256)) public freeBalance;
+
+    /// @notice user => token => accumulated fee balance available to claim
+    mapping(address => mapping(address => uint256)) public earnedFees;
 
     /// @notice user => positionId => UserPosition
     mapping(address => mapping(bytes32 => UserPosition)) public userPositions;
@@ -113,8 +114,12 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         bytes32 indexed positionId,
         PoolId indexed poolId
     );
+    event FeesClaimed(
+        address indexed user,
+        address indexed token,
+        uint256 amount
+    );
     event SwapSettled(address indexed token, int256 delta);
-    event HookSet(address indexed hook);
 
     // ─── Errors ──────────────────────────────────────────────────────────────
 
@@ -123,14 +128,20 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     error InsufficientFreeBalance();
     error PositionNotFound();
     error PositionAlreadyExists();
-    error NotHook();
     error InvalidTicks();
     error TransferFailed();
+    error InvalidHookInterface();
 
     // ─── Modifiers ────────────────────────────────────────────────────────────
 
     modifier onlyHook() {
-        if (msg.sender != hook) revert NotHook();
+        bool isValid = false;
+        try IAqua0BaseHookMarker(msg.sender).supportsInterface(type(IAqua0BaseHookMarker).interfaceId) returns (bool result) {
+            isValid = result;
+        } catch {
+            isValid = false;
+        }
+        if (!isValid) revert InvalidHookInterface();
         _;
     }
 
@@ -139,15 +150,6 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     constructor(address _owner) Ownable(_owner) {}
 
     receive() external payable {}
-
-    // ─── Admin ───────────────────────────────────────────────────────────────
-
-    /// @notice Set the Aqua0Hook address. Only callable once (or by owner to upgrade).
-    function setHook(address _hook) external onlyOwner {
-        if (_hook == address(0)) revert ZeroAddress();
-        hook = _hook;
-        emit HookSet(_hook);
-    }
 
     // ─── User: Deposit / Withdraw ─────────────────────────────────────────────
 
@@ -187,9 +189,36 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         emit Withdrawn(msg.sender, token, amount);
     }
 
+    /// @notice Claim accumulated fees for a specific token
+    function claimFees(address token) external nonReentrant {
+        uint256 amount = earnedFees[msg.sender][token];
+        if (amount == 0) revert ZeroAmount();
+
+        earnedFees[msg.sender][token] = 0;
+
+        if (token == address(0)) {
+            (bool success, ) = msg.sender.call{value: amount}("");
+            if (!success) revert TransferFailed();
+        } else {
+            IERC20(token).safeTransfer(msg.sender, amount);
+        }
+
+        emit FeesClaimed(msg.sender, token, amount);
+    }
+
     // ─── User: Positions ─────────────────────────────────────────────────────
 
     /// @notice Allocate liquidity from free balance into a specific V4 pool + tick range.
+    ///         The amount of tokens "locked" is implicit - tokens stay in this contract,
+    ///         only the liquidityShares counter increases. The user is responsible for
+    ///         ensuring their free token balances cover the position's value.
+    /// @param key          The V4 PoolKey for the target pool
+    /// @param tickLower    The lower tick bound (must be multiple of pool's tickSpacing)
+    /// @param tickUpper    The upper tick bound (must be tickLower < tickUpper)
+    /// @param liquidity    The amount of V4 liquidity units to allocate
+    /// @param token0Amount Amount of token0 to reserve for this position
+    /// @param token1Amount Amount of token1 to reserve for this position
+    /// @return positionId  The unique ID for this user's position
     function addPosition(
         PoolKey calldata key,
         int24 tickLower,
@@ -270,12 +299,13 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     }
 
     /// @notice Remove a virtual position, returning reserved tokens to free balance.
+    /// @param key         The V4 PoolKey
+    /// @param tickLower   The lower tick of the position to remove
+    /// @param tickUpper   The upper tick of the position to remove
     function removePosition(
         PoolKey calldata key,
         int24 tickLower,
-        int24 tickUpper,
-        uint256 token0Return,
-        uint256 token1Return
+        int24 tickUpper
     ) external nonReentrant {
         PoolId poolId = key.toId();
         bytes32 positionId = _positionId(
@@ -291,41 +321,12 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         uint128 liquidity = pos.liquidityShares;
 
         // Deactivate user position
+        // Deactivate user position
         pos.active = false;
         pos.liquidityShares = 0;
 
-        // Calculate PnL vs initially backed amount
-        address token0 = Currency.unwrap(key.currency0);
-        address token1 = Currency.unwrap(key.currency1);
-
-        int256 pnl0 = int256(token0Return) - int256(pos.token0Initial);
-        int256 pnl1 = int256(token1Return) - int256(pos.token1Initial);
-
         pos.token0Initial = 0;
         pos.token1Initial = 0;
-
-        // Apply Realized PnL strictly to the user's free balance.
-        if (pnl0 > 0) {
-            freeBalance[msg.sender][token0] += uint256(pnl0);
-        } else if (pnl0 < 0) {
-            uint256 loss = uint256(-pnl0);
-            if (freeBalance[msg.sender][token0] < loss) {
-                freeBalance[msg.sender][token0] = 0;
-            } else {
-                freeBalance[msg.sender][token0] -= loss;
-            }
-        }
-
-        if (pnl1 > 0) {
-            freeBalance[msg.sender][token1] += uint256(pnl1);
-        } else if (pnl1 < 0) {
-            uint256 loss = uint256(-pnl1);
-            if (freeBalance[msg.sender][token1] < loss) {
-                freeBalance[msg.sender][token1] = 0;
-            } else {
-                freeBalance[msg.sender][token1] -= loss;
-            }
-        }
 
         // Update aggregated range
         bytes32 rangeKey = _rangeKey(tickLower, tickUpper);
@@ -337,10 +338,13 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     // ─── Hook: Aggregation + Settlement ──────────────────────────────────────
 
     /// @notice Returns the dynamically scaled active tick ranges for the swap
+    ///         Checks each user's real-time free balance and scales their virtual liability to match their capacity.
     function preSwap(
         PoolKey calldata key
     ) external onlyHook returns (RangeInfo[] memory ranges) {
         PoolId poolId = key.toId();
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
 
         bytes32[] storage rangeKeys = _poolRangeKeys[poolId];
         uint256 count = rangeKeys.length;
@@ -360,13 +364,9 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
             RangeInfo storage r = aggregatedRanges[poolId][rangeKeys[i]];
             if (r.totalLiquidity == 0) continue;
 
-            uint128 totalScaledLiquidity = _scaleRangeUsers(
-                poolId,
-                rangeKeys[i],
-                r.tickLower,
-                r.tickUpper,
-                Currency.unwrap(key.currency0),
-                Currency.unwrap(key.currency1)
+            bytes32 rangeKey = rangeKeys[i];
+            uint128 totalScaledLiquidity = _computeRangeScaledLiquidity(
+                poolId, rangeKey, r.tickLower, r.tickUpper, token0, token1
             );
 
             ranges[idx] = RangeInfo({
@@ -378,137 +378,114 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
         }
     }
 
-    struct ScaleContext {
-        PoolId poolId;
-        bytes32 rangeKey;
-        int24 tickLower;
-        int24 tickUpper;
-        address token0;
-        address token1;
-    }
-
-    function _scaleRangeUsers(
+    /// @dev Private helper to compute per-user scaled liquidity for a range, store it ephemerally, and return total.
+    function _computeRangeScaledLiquidity(
         PoolId poolId,
         bytes32 rangeKey,
         int24 tickLower,
         int24 tickUpper,
         address token0,
         address token1
-    ) internal returns (uint128 totalScaledLiquidity) {
-        ScaleContext memory ctx = ScaleContext(poolId, rangeKey, tickLower, tickUpper, token0, token1);
+    ) private returns (uint128 totalScaledLiquidity) {
         address[] memory users = rangeUsers[poolId][rangeKey];
-
         for (uint256 j = 0; j < users.length; j++) {
-            totalScaledLiquidity += _scaleUser(ctx, users[j]);
+            address user = users[j];
+            bytes32 posId = _positionId(user, poolId, tickLower, tickUpper);
+            UserPosition storage pos = userPositions[user][posId];
+
+            if (!pos.active) continue;
+
+            uint256 scale = 1e18;
+            if (pos.token0Initial > 0) {
+                uint256 s0 = (freeBalance[user][token0] * 1e18) / pos.token0Initial;
+                if (s0 < scale) scale = s0;
+            }
+            if (pos.token1Initial > 0) {
+                uint256 s1 = (freeBalance[user][token1] * 1e18) / pos.token1Initial;
+                if (s1 < scale) scale = s1;
+            }
+
+            uint128 actualLiquidity = uint128(
+                (uint256(pos.liquidityShares) * scale) / 1e18
+            );
+            ephemeralScaledLiquidity[poolId][rangeKey][user] = actualLiquidity;
+            totalScaledLiquidity += actualLiquidity;
         }
-    }
-
-    function _scaleUser(ScaleContext memory ctx, address user) internal returns (uint128) {
-        bytes32 posId = _positionId(user, ctx.poolId, ctx.tickLower, ctx.tickUpper);
-        UserPosition storage pos = userPositions[user][posId];
-
-        if (!pos.active) return 0;
-
-        uint256 scale = 1e18;
-
-        if (pos.token0Initial > 0) {
-            uint256 s0 = (freeBalance[user][ctx.token0] * 1e18) / pos.token0Initial;
-            if (s0 < scale) scale = s0;
-        }
-        if (pos.token1Initial > 0) {
-            uint256 s1 = (freeBalance[user][ctx.token1] * 1e18) / pos.token1Initial;
-            if (s1 < scale) scale = s1;
-        }
-
-        uint128 actualLiquidity = uint128((uint256(pos.liquidityShares) * scale) / 1e18);
-        ephemeralScaledLiquidity[ctx.poolId][ctx.rangeKey][user] = actualLiquidity;
-        return actualLiquidity;
     }
 
     /// @notice Takes the exact BalanceDeltas generated by the swap for each range, calculates Net PnL,
     ///         and distributes it precisely to users based on their ephemeral actual liquidity contribution.
+    /// @param lpFee The pool's active LP fee in pips (e.g. 3000 = 0.3%). Used to isolate earned fees from inventory shift.
     function postSwap(
         PoolKey calldata key,
         RangeInfo[] calldata injectedRanges,
         BalanceDelta[] calldata mintDeltas,
-        BalanceDelta[] calldata burnDeltas
+        BalanceDelta[] calldata burnDeltas,
+        uint24 lpFee
     ) external onlyHook {
         PoolId poolId = key.toId();
         address token0 = Currency.unwrap(key.currency0);
         address token1 = Currency.unwrap(key.currency1);
 
         for (uint256 i = 0; i < injectedRanges.length; i++) {
-            _distributeRangePnL(
-                poolId, token0, token1,
-                injectedRanges[i],
-                mintDeltas[i],
-                burnDeltas[i]
-            );
+            RangeInfo calldata r = injectedRanges[i];
+            bytes32 rangeKey = _rangeKey(r.tickLower, r.tickUpper);
+            uint128 totalActualLiquidity = r.totalLiquidity;
+
+            if (totalActualLiquidity == 0) continue;
+
+            // netPnL = mint (cost to add) + burn (tokens returned + fees)
+            int256 netPnL0 = int256(
+                BalanceDeltaLibrary.amount0(mintDeltas[i])
+            ) + int256(BalanceDeltaLibrary.amount0(burnDeltas[i]));
+            int256 netPnL1 = int256(
+                BalanceDeltaLibrary.amount1(mintDeltas[i])
+            ) + int256(BalanceDeltaLibrary.amount1(burnDeltas[i]));
+
+            address[] memory users = rangeUsers[poolId][rangeKey];
+
+            for (uint256 j = 0; j < users.length; j++) {
+                address user = users[j];
+                uint128 userLiquidity = ephemeralScaledLiquidity[poolId][
+                    rangeKey
+                ][user];
+
+                if (userLiquidity == 0) continue;
+
+                // Distribute PnL directly to freeBalance
+                int256 userPnL0 = (netPnL0 * int256(uint256(userLiquidity))) /
+                    int256(uint256(totalActualLiquidity));
+                int256 userPnL1 = (netPnL1 * int256(uint256(userLiquidity))) /
+                    int256(uint256(totalActualLiquidity));
+
+                _applyNetPnL(user, token0, userPnL0, lpFee);
+                _applyNetPnL(user, token1, userPnL1, lpFee);
+
+                // Zero out storage to refund gas
+                ephemeralScaledLiquidity[poolId][rangeKey][user] = 0;
+            }
         }
     }
 
-    struct PnLContext {
-        PoolId poolId;
-        bytes32 rangeKey;
-        address token0;
-        address token1;
-        int256 netPnL0;
-        int256 netPnL1;
-        uint128 totalLiquidity;
-    }
-
-    function _distributeRangePnL(
-        PoolId poolId,
-        address token0,
-        address token1,
-        RangeInfo calldata r,
-        BalanceDelta mintDelta,
-        BalanceDelta burnDelta
-    ) internal {
-        if (r.totalLiquidity == 0) return;
-
-        PnLContext memory ctx = PnLContext({
-            poolId: poolId,
-            rangeKey: _rangeKey(r.tickLower, r.tickUpper),
-            token0: token0,
-            token1: token1,
-            netPnL0: int256(BalanceDeltaLibrary.amount0(mintDelta))
-                + int256(BalanceDeltaLibrary.amount0(burnDelta)),
-            netPnL1: int256(BalanceDeltaLibrary.amount1(mintDelta))
-                + int256(BalanceDeltaLibrary.amount1(burnDelta)),
-            totalLiquidity: r.totalLiquidity
-        });
-
-        address[] memory users = rangeUsers[poolId][ctx.rangeKey];
-
-        for (uint256 j = 0; j < users.length; j++) {
-            _distributeUserPnL(ctx, users[j]);
-        }
-    }
-
-    function _distributeUserPnL(PnLContext memory ctx, address user) internal {
-        uint128 userLiquidity = ephemeralScaledLiquidity[ctx.poolId][ctx.rangeKey][user];
-        if (userLiquidity == 0) return;
-
-        int256 userPnL0 = (ctx.netPnL0 * int256(uint256(userLiquidity)))
-            / int256(uint256(ctx.totalLiquidity));
-        int256 userPnL1 = (ctx.netPnL1 * int256(uint256(userLiquidity)))
-            / int256(uint256(ctx.totalLiquidity));
-
-        _applyNetPnL(user, ctx.token0, userPnL0);
-        _applyNetPnL(user, ctx.token1, userPnL1);
-
-        // Zero out storage to refund gas
-        ephemeralScaledLiquidity[ctx.poolId][ctx.rangeKey][user] = 0;
-    }
-
-    function _applyNetPnL(address user, address token, int256 pnl) internal {
+    /// @dev Positive pnl = input token inflow. Split into:
+    ///      - fee portion  = pnl * lpFee / 1_000_000  → earnedFees (claimable)
+    ///      - inventory shift = remainder              → freeBalance (auto-rebalanced principal)
+    /// @dev Negative pnl = output token outflow (pure inventory shift) → deducted from freeBalance.
+    function _applyNetPnL(address user, address token, int256 pnl, uint24 lpFee) internal {
         if (pnl > 0) {
-            freeBalance[user][token] += uint256(pnl);
+            uint256 totalPositive = uint256(pnl);
+            // Fee is taken from amountIn by Uniswap, so our share of positive PnL contains
+            // both the fee portion AND the inventory shift (principal rebalancing).
+            uint256 feePortion = (totalPositive * uint256(lpFee)) / 1_000_000;
+            uint256 inventoryShift = totalPositive - feePortion;
+
+            earnedFees[user][token] += feePortion;
+            freeBalance[user][token] += inventoryShift;
         } else if (pnl < 0) {
+            // Negative PnL is purely inventory shift (output token paid out)
             uint256 loss = uint256(-pnl);
             if (freeBalance[user][token] < loss) {
-                freeBalance[user][token] = 0;
+                freeBalance[user][token] = 0; // guard against underflow in edge cases
             } else {
                 freeBalance[user][token] -= loss;
             }
@@ -516,6 +493,10 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
     }
 
     /// @notice Called by Aqua0Hook in afterSwap to settle net token movements.
+    ///         If delta > 0: hook owes us tokens - take from hook (hook must have approved).
+    ///         If delta < 0: we owe tokens - transfer to hook for PoolManager settlement.
+    /// @param token The token to settle
+    /// @param delta Positive = we receive, negative = we send
     function settleSwapDelta(
         address token,
         int256 delta
@@ -539,7 +520,7 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
             } else {
                 console.log("  -> Pulling ERC20 from hook via transferFrom");
                 IERC20(token).safeTransferFrom(
-                    hook,
+                    msg.sender,
                     address(this),
                     uint256(delta)
                 );
@@ -548,13 +529,13 @@ contract SharedLiquidityPool is Ownable, ReentrancyGuard {
             // We owe tokens - send to hook so hook can settle with PoolManager
             uint256 owed = uint256(-delta);
             if (token == address(0)) {
-                console.log("  -> Sending", owed, "wei ETH to hook", hook);
-                (bool success, ) = hook.call{value: owed}("");
+                console.log("  -> Sending", owed, "wei ETH to hook", msg.sender);
+                (bool success, ) = msg.sender.call{value: owed}("");
                 if (!success) revert TransferFailed();
                 console.log("  -> ETH sent OK");
             } else {
                 console.log("  -> Sending", owed, "wei ERC20 to hook");
-                IERC20(token).safeTransfer(hook, owed);
+                IERC20(token).safeTransfer(msg.sender, owed);
             }
         }
 

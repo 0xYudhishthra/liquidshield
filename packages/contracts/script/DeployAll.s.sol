@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity >=0.8.26;
 
 import "forge-std/Script.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -29,11 +29,9 @@ contract DeployAll is Script {
 
         // Phase 1-2: Deploy Hook via CREATE2
         LiquidShieldHook hook = _deployHook(deployer, sharedPoolAddr);
-        // Register hook on SharedLiquidityPool (permissionless via ERC165)
-        // Call registerHook directly since our local copy may not have this function
-        (bool regSuccess,) = sharedPoolAddr.call(abi.encodeWithSignature("registerHook(address)", address(hook)));
-        require(regSuccess, "registerHook failed");
-        console.log("Hook registered on SharedLiquidityPool");
+        // No registration needed - SharedLiquidityPool's onlyHook modifier
+        // checks ERC165 supportsInterface on msg.sender dynamically
+        console.log("Hook implements IAqua0BaseHookMarker - permissionless access to SharedLiquidityPool");
 
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));

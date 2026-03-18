@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity >=0.8.26;
 
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -252,7 +252,7 @@ contract LiquidShieldHook is IHooks, Aqua0BaseHook, IUnlockCallback {
         external onlyPoolManager returns (bytes4, int128)
     {
         // Remove Aqua0 JIT liquidity and settle deltas
-        bool hasJIT = _removeVirtualLiquidity(key);
+        (bool hasJIT,) = _removeVirtualLiquidity(key);
         if (hasJIT) {
             _settleVirtualLiquidityDeltas(key);
         }

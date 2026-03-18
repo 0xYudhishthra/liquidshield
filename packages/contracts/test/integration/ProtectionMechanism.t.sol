@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity >=0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {Deployers} from "v4-core/test/utils/Deployers.sol";
@@ -70,7 +70,6 @@ contract ProtectionMechanismTest is Test, Deployers {
         );
         hook = LiquidShieldHook(payable(hookAddr));
 
-        sharedPool.setHook(hookAddr);
 
         settler = new LiquidShieldSettler(hookAddr);
         settler.setAuthorizedFiller(fillerAddr);

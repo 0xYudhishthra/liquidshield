@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.8.0;
+pragma solidity >=0.8.26;
 
 import {IReactive} from "reactive-lib/src/interfaces/IReactive.sol";
 import {AbstractReactive} from "reactive-lib/src/abstract-base/AbstractReactive.sol";
