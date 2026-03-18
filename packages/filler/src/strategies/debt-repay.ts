@@ -36,6 +36,7 @@ export async function executeBatchedUnwind(intent: DefenseIntent): Promise<strin
   );
 
   const hash = await walletClient.writeContract({
+    chain: null,
     address: config.executorAddress as `0x${string}`,
     abi: EXECUTOR_ABI,
     functionName: "executeDefense",

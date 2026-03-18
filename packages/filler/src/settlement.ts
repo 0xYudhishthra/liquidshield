@@ -22,6 +22,7 @@ export function createSettlement() {
     console.log(`Settling order ${orderId} on Unichain`);
 
     const hash = await walletClient.writeContract({
+      chain: null,
       address: CHAIN_CONFIG.unichain.settlerAddress as `0x${string}`,
       abi: ABI,
       functionName: "settle",

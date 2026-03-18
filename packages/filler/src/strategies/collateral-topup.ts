@@ -35,6 +35,7 @@ export async function executeCollateralTopup(intent: DefenseIntent): Promise<str
   );
 
   const hash = await walletClient.writeContract({
+    chain: null,
     address: config.executorAddress as `0x${string}`,
     abi: EXECUTOR_ABI,
     functionName: "executeDefense",
