@@ -5,6 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 const UNICHAIN_RPC = process.env.UNICHAIN_SEPOLIA_RPC_URL || "https://sepolia.unichain.org";
 const ROUTER_ADDRESS = process.env.LIQUIDSHIELD_ROUTER_ADDRESS || "0xa81344a8A6320Fc75095aF160CaCe5B47530E444";
 const HOOK_ADDRESS = process.env.LIQUIDSHIELD_HOOK_ADDRESS || "0x0AA6345204931FE6E5748BdB0A17C8DfeD25d5c0";
+// Note: update this if hook is redeployed
 
 // Mock token addresses on Unichain Sepolia (for premium payment)
 const MWETH = "0xD9cA9700DecEB91b61dAF48C8De7879C9Bfe9fe9";
@@ -109,10 +110,33 @@ protectRoutes.post("/", async (c) => {
       ],
     });
 
-    console.log(`Protection registered for ${userAddress}: ${hash}`);
+    console.log(`Protection registered on Unichain for ${userAddress}: ${hash}`);
 
-    // Wait for confirmation
+    // Wait for Unichain confirmation
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+    // Also add to HealthChecker on Base Sepolia
+    const BASE_RPC = process.env.BASE_SEPOLIA_RPC_URL || "https://base-sepolia-rpc.publicnode.com";
+    const HEALTH_CHECKER = process.env.HEALTH_CHECKER_ADDRESS || "0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038";
+
+    try {
+      const baseWalletClient = createWalletClient({
+        account,
+        chain: null,
+        transport: http(BASE_RPC),
+      });
+
+      const hcHash = await baseWalletClient.writeContract({
+        address: HEALTH_CHECKER as `0x${string}`,
+        abi: [{ name: "addPosition", type: "function", stateMutability: "nonpayable",
+          inputs: [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }], outputs: [] }],
+        functionName: "addPosition",
+        args: [positionId as `0x${string}`, userAddress as `0x${string}`, BigInt(healthThreshold || "1500000000000000000")],
+      });
+      console.log(`Position added to HealthChecker on Base Sepolia: ${hcHash}`);
+    } catch (hcError: any) {
+      console.error("Failed to add to HealthChecker (non-fatal):", hcError.message);
+    }
 
     return c.json({
       txHash: hash,
