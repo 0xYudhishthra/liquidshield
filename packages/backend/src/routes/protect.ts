@@ -78,7 +78,7 @@ protectRoutes.post("/", async (c) => {
 
     const walletClient = createWalletClient({
       account,
-      chain: null,
+      chain: undefined,
       transport: http(UNICHAIN_RPC),
     });
 
@@ -93,7 +93,7 @@ protectRoutes.post("/", async (c) => {
     // The hook's registerPosition sets owner to msg.sender (our deployer)
     // For the demo, this is fine — in production, use the router with onBehalfOf delegation
     const hash = await walletClient.writeContract({
-      chain: null,
+      chain: undefined,
       address: HOOK_ADDRESS as `0x${string}`,
       abi: HOOK_ABI,
       functionName: "registerPosition",
@@ -123,12 +123,12 @@ protectRoutes.post("/", async (c) => {
     try {
       const baseWalletClient = createWalletClient({
         account,
-        chain: null,
+        chain: undefined,
         transport: http(BASE_RPC),
       });
 
       const hcHash = await baseWalletClient.writeContract({
-        chain: null,
+        chain: undefined,
         address: HEALTH_CHECKER as `0x${string}`,
         abi: [{ name: "addPosition", type: "function", stateMutability: "nonpayable",
           inputs: [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }], outputs: [] }],
