@@ -18,12 +18,14 @@ remappings = [
     "@uniswap/v4-core/=lib/uniswap-hooks/lib/v4-core/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
     "@openzeppelin/uniswap-hooks/=lib/uniswap-hooks/",
+    "reactive-lib/=lib/reactive-lib/",
 ]
 
 [rpc_endpoints]
 unichain_sepolia = "${UNICHAIN_SEPOLIA_RPC_URL}"
 arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC_URL}"
 ethereum_sepolia = "${ETHEREUM_SEPOLIA_RPC_URL}"
+reactive_lasna = "${REACTIVE_LASNA_RPC_URL}"
 
 [etherscan]
 unichain_sepolia = { key = "${ETHERSCAN_API_KEY}" }

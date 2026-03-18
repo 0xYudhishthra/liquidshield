@@ -7,3 +7,6 @@
 [submodule "packages/contracts/lib/uniswap-hooks"]
 	path = packages/contracts/lib/uniswap-hooks
 	url = https://github.com/OpenZeppelin/uniswap-hooks
+[submodule "packages/contracts/lib/reactive-lib"]
+	path = packages/contracts/lib/reactive-lib
+	url = https://github.com/Reactive-Network/reactive-lib

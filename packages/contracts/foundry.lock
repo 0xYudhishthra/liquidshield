@@ -11,6 +11,12 @@
       "rev": "56a3de2cea907c9a500d32e70c275f68393b7ba6"
     }
   },
+  "lib/reactive-lib": {
+    "tag": {
+      "name": "v0.2.0",
+      "rev": "d664678a7d86204c9391af4cedfd5ae0b0b904e4"
+    }
+  },
   "lib/uniswap-hooks": {
     "tag": {
       "name": "v1.2.1",
