@@ -50,7 +50,7 @@ contract DeployAll is Script {
         console.log("CREATE2 factory:", address(factory));
 
         // Phase 2: Mine salt and deploy hook via factory
-        LiquidShieldHook hook = _deployHook(address(factory), sharedPoolAddr);
+        LiquidShieldHook hook = _deployHook(address(factory), sharedPoolAddr, deployer);
 
         // Phase 3: Deploy Settler + Router
         LiquidShieldSettler settler = new LiquidShieldSettler(address(hook));
@@ -82,14 +82,13 @@ contract DeployAll is Script {
         console.log(string.concat("NEXT_PUBLIC_SETTLER_ADDRESS=", vm.toString(address(settler))));
     }
 
-    function _deployHook(address factoryAddr, address sharedPoolAddr) internal returns (LiquidShieldHook hook) {
+    function _deployHook(address factoryAddr, address sharedPoolAddr, address ownerAddr) internal returns (LiquidShieldHook hook) {
         console.log("SharedLiquidityPool (existing):", sharedPoolAddr);
+        console.log("Hook owner will be:", ownerAddr);
 
-        // Pass the deployer EOA as owner (3rd constructor arg)
-        address deployer = msg.sender;
         bytes memory initCode = abi.encodePacked(
             type(LiquidShieldHook).creationCode,
-            abi.encode(POOL_MANAGER, sharedPoolAddr, deployer)
+            abi.encode(POOL_MANAGER, sharedPoolAddr, ownerAddr)
         );
         bytes32 initCodeHash = keccak256(initCode);
 
