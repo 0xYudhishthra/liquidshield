@@ -1,12 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Hero } from "./Hero";
-import { HowItWorks } from "./HowItWorks";
-import { Problem } from "./Problem";
-import { TechStrip } from "./TechStrip";
-import { CTA } from "./CTA";
+import { InfoTabs } from "./InfoTabs";
 import { PositionScanner } from "./PositionScanner";
+import { TechStrip } from "./TechStrip";
 
 interface LandingProps {
   isConnected: boolean;
@@ -37,31 +36,27 @@ export function Landing({ isConnected, address }: LandingProps) {
         </div>
       </header>
 
-      <Hero />
-      <Problem />
-      <HowItWorks />
-      <TechStrip />
+      {/* Hero with CTA */}
+      <Hero isConnected={isConnected} />
 
-      {/* Show position scanner when connected, CTA when not */}
-      {isConnected && address ? (
+      {/* Position Scanner — right below hero when connected */}
+      {isConnected && address && (
         <PositionScanner address={address} />
-      ) : (
-        <CTA />
       )}
+
+      {/* Info Tabs: Problem / How It Works / Architecture */}
+      <InfoTabs />
+
+      {/* Tech Strip */}
+      <TechStrip />
 
       {/* Footer */}
       <footer className="border-t border-white/[0.06] py-12">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <img
-                src="/logo.svg"
-                alt="LiquidShield"
-                className="w-5 h-5 opacity-50"
-              />
-              <span className="text-sm font-bold text-white/50">
-                LiquidShield
-              </span>
+              <img src="/logo.svg" alt="LiquidShield" className="w-5 h-5 opacity-50" />
+              <span className="text-sm font-bold text-white/50">LiquidShield</span>
             </div>
             <p className="text-xs text-white/25">
               UHI8 Hookathon 2026 &middot; Built on Uniswap v4

@@ -134,12 +134,15 @@ LiquidShield's hook inherits from `Aqua0BaseHook` — a shared liquidity layer w
 
 ---
 
-## Defense Strategies
+## Defense Strategy
 
-| Strategy | Adapter | When Used | How It Works |
+The demo uses **Batched Gradual Unwind** via the `AaveV3Adapter` on Base Sepolia:
+
+| Strategy | Adapter | Chain | How It Works |
 |---|---|---|---|
-| **Collateral Top-Up** | `AaveV3Adapter` | Health factor approaching threshold | Hook extracts WETH from defense reserve → filler deposits as additional collateral on Aave → health factor recovers |
-| **Batched Gradual Unwind** | `MorphoBlueAdapter` | Position in critical danger | Hook emits N sequential ERC-7683 intents, each for a fractional portion → filler executes each batch on source chain → position gracefully unwound without cascade liquidation |
+| **Batched Gradual Unwind** | `AaveV3Adapter` | Base Sepolia | Hook extracts mWETH from ERC-6909 defense reserve → emits ERC-7683 intent → filler executes batched unwind on Aave V3 → position progressively unwound without cascade liquidation |
+
+> The architecture supports multiple strategies via the `ILendingAdapter` interface. `MorphoBlueAdapter` is included with 8 unit tests but is not deployed (no Morpho markets on supported testnets).
 
 ---
 
