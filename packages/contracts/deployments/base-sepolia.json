@@ -1,0 +1,12 @@
+{
+  "chainId": 84532,
+  "deployer": "0x40BA13eAA42D52915E79dDb7A980707Fd70D945f",
+  "defenseExecutor": "0xf02cB2bC2121b7688EE87eE546D2f819ae1C2c67",
+  "aaveV3Adapter": "0x1eB7638CAa7053833Ad9cd7E8276f3E3574AD106",
+  "aavePool": "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
+  "aavePosition": {
+    "collateral": "0.3 WETH",
+    "debt": "~299 USDC",
+    "healthFactor": "1.97"
+  }
+}
