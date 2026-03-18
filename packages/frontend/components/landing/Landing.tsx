@@ -6,8 +6,14 @@ import { HowItWorks } from "./HowItWorks";
 import { Problem } from "./Problem";
 import { TechStrip } from "./TechStrip";
 import { CTA } from "./CTA";
+import { PositionScanner } from "./PositionScanner";
 
-export function Landing() {
+interface LandingProps {
+  isConnected: boolean;
+  address?: string;
+}
+
+export function Landing({ isConnected, address }: LandingProps) {
   return (
     <main className="min-h-screen bg-black">
       {/* Header */}
@@ -35,14 +41,24 @@ export function Landing() {
       <Problem />
       <HowItWorks />
       <TechStrip />
-      <CTA />
+
+      {/* Show position scanner when connected, CTA when not */}
+      {isConnected && address ? (
+        <PositionScanner address={address} />
+      ) : (
+        <CTA />
+      )}
 
       {/* Footer */}
       <footer className="border-t border-white/[0.06] py-12">
         <div className="max-w-5xl mx-auto px-4 sm:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2">
-              <img src="/logo.svg" alt="LiquidShield" className="w-5 h-5 opacity-50" />
+              <img
+                src="/logo.svg"
+                alt="LiquidShield"
+                className="w-5 h-5 opacity-50"
+              />
               <span className="text-sm font-bold text-white/50">
                 LiquidShield
               </span>
