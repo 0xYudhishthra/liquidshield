@@ -248,10 +248,11 @@ sequenceDiagram
 | Step | Description | Network | Transaction |
 |---|---|---|---|
 | **RSC Deploy** | PositionMonitor deployed with CRON + HealthDanger subscriptions | Reactive Lasna | [`0xaba3f725...`](https://lasna.reactscan.net/tx/0xaba3f725942bcd2363c15a7912ae7af63fa2ced7c0a7dc3a8374df6e254f6871) |
-| **Hop 1** | RSC CRON → HealthChecker reads Aave on-chain → emits HealthDanger for 4 positions | Base Sepolia | [`0xba19cc06...`](https://sepolia.basescan.org/tx/0xba19cc068fb800138841703bc45e2f495121a6499b450bed6566f1c7e3a960f9) |
-| **Hop 2** | RSC detects HealthDanger → callback proxy → DefenseCallback on Unichain | Unichain Sepolia | [`0x8034a122...`](https://sepolia.uniscan.xyz/tx/0x8034a1229092ab7be7623f1552681d42c9d5dd60cf2059fd6640c0e8ea3412bb) |
-| **Defense Triggered** | Hook burns ERC-6909 claims, takes tokens, emits ERC-7683 intent | Unichain Sepolia | [`0x77c446e4...`](https://sepolia.uniscan.xyz/tx/0x77c446e449af2ef669a18c6254e31f8637bce7d7a43e6f1b065d720d5deb7e2a) |
-| **Intent Emitted** | Settler emits OrderOpened (nonce 7) for second defended position | Unichain Sepolia | [`0xf1731ec4...`](https://sepolia.uniscan.xyz/tx/0xf1731ec4dcc100a428695237a503e1a85df3d06274d7bfe52c7ecec9a8ff1e33) |
+| **CRON react()** | RSC fires on CRON tick → emits Callback to HealthChecker on Base Sepolia | Reactive Lasna | [`0x1d4d22ff...`](https://lasna.reactscan.net/tx/0x1d4d22ff18ce5687e3fea5eb0353da8fcaba98db1b707398115cbc32c9d8ff97) |
+| **Hop 1 Callback** | HealthChecker reads Aave on-chain → emits HealthDanger for 4 positions | Base Sepolia | [`0xba19cc06...`](https://sepolia.basescan.org/tx/0xba19cc068fb800138841703bc45e2f495121a6499b450bed6566f1c7e3a960f9) |
+| **HealthDanger react()** | RSC detects HealthDanger events → emits Callbacks to Unichain | Reactive Lasna | [`0xe720f1b5...`](https://lasna.reactscan.net/tx/0xe720f1b5d387311a3a709b66f1c7a4e9ff195dd1f2c86c698aecfa56140e6322) |
+| **Hop 2 Callback** | Callback proxy → DefenseCallback → hook.triggerDefense() | Unichain Sepolia | [`0x77c446e4...`](https://sepolia.uniscan.xyz/tx/0x77c446e449af2ef669a18c6254e31f8637bce7d7a43e6f1b065d720d5deb7e2a) |
+| **Defense Triggered** | Hook burns ERC-6909 claims, takes tokens, emits ERC-7683 intent via Settler | Unichain Sepolia | [`0xf1731ec4...`](https://sepolia.uniscan.xyz/tx/0xf1731ec4dcc100a428695237a503e1a85df3d06274d7bfe52c7ecec9a8ff1e33) |
 | **Filler Execution** | Filler calls DefenseExecutor → AaveV3Adapter supplies WETH to Aave V3 | Base Sepolia | [`0x569338d2...`](https://sepolia.basescan.org/tx/0x569338d268eabbd5a64e6d3adb18282f73c673f87c940c698a5ded50e87d11dd) |
 | **Order Settlement** | Filler settles ERC-7683 order on Settler (marks order complete) | Unichain Sepolia | [`0xad944a50...`](https://sepolia.uniscan.xyz/tx/0xad944a506a8fae211ecfc4f5dadc393644f1aca6c0f2a30ac48d8e95c8f931cc) |
 | **Defense Settled** | Hook settleDefense() → reserve replenished, 1.5% fee charged, position → ACTIVE | Unichain Sepolia | [`0x55493273...`](https://sepolia.uniscan.xyz/tx/0x55493273aebb6181b1fb0380c702945ef7bdaebf1d61de8cbd754f3c1a419b6c) |
@@ -401,20 +402,6 @@ forge test --match-contract FullDefenseFlowTest       # End-to-end integration (
 | Frontend tests | 129 | Component tests, hook tests, utility tests |
 | Filler tests | 23 | Watcher, executor, strategy tests |
 | **Total** | **563** | |
-
----
-
-## Demo Video
-
-**[Watch on Loom](LOOM_LINK_HERE)** — under 5 minutes
-
-The demo shows:
-1. **Landing page walkthrough**: Problem, solution, architecture — with live frontend
-2. **Position detection**: Connect wallet → detect Aave V3 position on Base Sepolia → show health factor
-3. **Defense trigger**: Reactive Network RSC detects low health → two-hop callback → hook extracts ERC-6909 capital → ERC-7683 intent emitted
-4. **Batched unwind**: Filler executes defense on Base Sepolia via AaveV3Adapter
-
-> One mWETH/mUSDC pool on Unichain. Aave V3 on Base Sepolia. Reactive Network monitoring. Every delta resolves to zero.
 
 ---
 
