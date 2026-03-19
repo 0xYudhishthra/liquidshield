@@ -253,9 +253,26 @@ sequenceDiagram
 | `HealthChecker` | Base Sepolia | `0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038` |
 | `DefenseExecutor` | Base Sepolia | `0x4459b385544c752922940ba87e86c6DbA8f4CDEF` |
 | `AaveV3Adapter` | Base Sepolia | `0x560010aEA084A62B3e666f7e48A190A299049129` |
-| `PositionMonitor` (RSC) | Reactive Lasna | `0x86cD714b0ad55E757C0204950DfC38d0959246FB` |
+| `PositionMonitor` (RSC) | Reactive Lasna | `0x92CD07dD3F91F00242Be400a54184830aeDfb464` |
 
-> **Demo scope:** The system actively monitors a real Aave V3 position on Base Sepolia (WETH collateral, USDC debt, HF ~1.22). The RSC's CRON triggers the HealthChecker every ~10 blocks, which reads the health factor on-chain from Aave. When HF < 1.5, the HealthDanger event triggers defense on Unichain — ERC-6909 extraction, ERC-7683 intent emission via batched unwind strategy.
+> **Demo scope:** The system actively monitors real Aave V3 positions on Base Sepolia (WETH collateral, USDC debt). The RSC's CRON triggers the HealthChecker every ~10 blocks, which reads the health factor on-chain from Aave. When HF < 1.5, the HealthDanger event triggers defense on Unichain — ERC-6909 extraction, ERC-7683 intent emission via batched unwind strategy.
+
+### Verified Transactions (End-to-End Proof)
+
+> These transactions demonstrate the full cross-chain defense flow working on live testnets.
+
+| Step | Description | Network | Transaction |
+|---|---|---|---|
+| **RSC Deploy** | PositionMonitor deployed with CRON + HealthDanger subscriptions | Reactive Lasna | [`0xaba3f725...`](https://lasna-explorer.rnk.dev/tx/0xaba3f725942bcd2363c15a7912ae7af63fa2ced7c0a7dc3a8374df6e254f6871) |
+| **Hop 1** | RSC CRON → HealthChecker reads Aave on-chain → emits HealthDanger for 4 positions | Base Sepolia | [`0xba19cc06...`](https://sepolia.basescan.org/tx/0xba19cc068fb800138841703bc45e2f495121a6499b450bed6566f1c7e3a960f9) |
+| **Hop 2** | RSC detects HealthDanger → callback proxy → DefenseCallback on Unichain | Unichain Sepolia | [`0x8034a122...`](https://sepolia.uniscan.xyz/tx/0x8034a1229092ab7be7623f1552681d42c9d5dd60cf2059fd6640c0e8ea3412bb) |
+| **Defense Triggered** | Hook burns ERC-6909 claims, takes tokens, emits ERC-7683 intent | Unichain Sepolia | [`0x77c446e4...`](https://sepolia.uniscan.xyz/tx/0x77c446e449af2ef669a18c6254e31f8637bce7d7a43e6f1b065d720d5deb7e2a) |
+| **Intent Emitted** | Settler emits OrderOpened (nonce 7) for second defended position | Unichain Sepolia | [`0xf1731ec4...`](https://sepolia.uniscan.xyz/tx/0xf1731ec4dcc100a428695237a503e1a85df3d06274d7bfe52c7ecec9a8ff1e33) |
+| **Filler Execution** | Filler calls DefenseExecutor → AaveV3Adapter supplies WETH to Aave V3 | Base Sepolia | [`0x569338d2...`](https://sepolia.basescan.org/tx/0x569338d268eabbd5a64e6d3adb18282f73c673f87c940c698a5ded50e87d11dd) |
+| **Order Settlement** | Filler settles ERC-7683 order on Settler (marks order complete) | Unichain Sepolia | [`0xad944a50...`](https://sepolia.uniscan.xyz/tx/0xad944a506a8fae211ecfc4f5dadc393644f1aca6c0f2a30ac48d8e95c8f931cc) |
+| **Defense Settled** | Hook settleDefense() → reserve replenished, 1.5% fee charged, position → ACTIVE | Unichain Sepolia | [`0x55493273...`](https://sepolia.uniscan.xyz/tx/0x55493273aebb6181b1fb0380c702945ef7bdaebf1d61de8cbd754f3c1a419b6c) |
+
+> **RSC on Lasna Explorer:** View the PositionMonitor RSC and its reactive transactions at [`0x92CD07dD...`](https://lasna-explorer.rnk.dev/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) — the explorer shows CRON subscriptions firing and callback emissions to both Base Sepolia (Hop 1) and Unichain Sepolia (Hop 2).
 
 ---
 
@@ -325,7 +342,7 @@ Copy `.env.example` to `.env` and fill in your values:
 UNICHAIN_SEPOLIA_RPC_URL=https://sepolia.unichain.org
 ARBITRUM_SEPOLIA_RPC_URL=https://sepolia-rollup.arbitrum.io/rpc
 ETHEREUM_SEPOLIA_RPC_URL=https://rpc.sepolia.org
-REACTIVE_KOPLI_RPC_URL=https://kopli-rpc.reactive.network
+REACTIVE_LASNA_RPC_URL=https://lasna-rpc.rnk.dev
 
 # Deployer
 PRIVATE_KEY=0x...
