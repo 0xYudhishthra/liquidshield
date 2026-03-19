@@ -4,7 +4,7 @@
 > **UHI8 Hookathon | March 2026**
 
 > [!IMPORTANT]
-> **[Watch the Demo Video](LOOM_LINK_HERE)** (under 5 minutes)
+> **[Watch the Demo Video](https://youtu.be/UxpfyD6-fjU)** (under 5 minutes)
 
 **Never get liquidated again.** LiquidShield is a Uniswap v4 hook that monitors DeFi lending positions across chains and executes preemptive defense strategies before liquidation occurs — turning Uniswap LPs into decentralized insurance providers.
 
@@ -427,7 +427,7 @@ This project is licensed under the [MIT License](./LICENSE).
 
 ## Links
 
-- **Demo Video**: [Loom](LOOM_LINK_HERE)
+- **Demo Video**: [YouTube](https://youtu.be/UxpfyD6-fjU)
 - **Hookathon**: [UHI8 by Atrium Academy](https://atrium.academy/uniswap)
 - **Uniswap v4 Docs**: [docs.uniswap.org](https://docs.uniswap.org/contracts/v4/overview)
 - **Unichain Docs**: [docs.unichain.org](https://docs.unichain.org)
