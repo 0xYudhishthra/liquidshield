@@ -256,7 +256,7 @@ sequenceDiagram
 | **Order Settlement** | Filler settles ERC-7683 order on Settler (marks order complete) | Unichain Sepolia | [`0xad944a50...`](https://sepolia.uniscan.xyz/tx/0xad944a506a8fae211ecfc4f5dadc393644f1aca6c0f2a30ac48d8e95c8f931cc) |
 | **Defense Settled** | Hook settleDefense() → reserve replenished, 1.5% fee charged, position → ACTIVE | Unichain Sepolia | [`0x55493273...`](https://sepolia.uniscan.xyz/tx/0x55493273aebb6181b1fb0380c702945ef7bdaebf1d61de8cbd754f3c1a419b6c) |
 
-> **RSC proof of liveness:** View the PositionMonitor RSC RVM transactions at [`0x92CD07dD...` on Reactscan](https://lasna.reactscan.net/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) (select the RVM Transactions tab). Callback arrivals are also independently verifiable on the destination chains: [HealthChecker on Basescan](https://sepolia.basescan.org/address/0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038) (Hop 1 callbacks) and [DefenseCallback on Uniscan](https://sepolia.uniscan.xyz/address/0xa83E9240221e66f58665fef54F653f0a89E70B75) (Hop 2 callbacks).
+> **RSC proof of liveness:** [13,000+ RVM transactions on Reactscan](https://lasna.reactscan.net/address/0x40ba13eaa42d52915e79ddb7a980707fd70d945f?screen=rvm_transactions) show the PositionMonitor RSC continuously firing CRON callbacks and HealthDanger responses. Callback arrivals are independently verifiable on the destination chains: [HealthChecker on Basescan](https://sepolia.basescan.org/address/0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038) (Hop 1) and [DefenseCallback on Uniscan](https://sepolia.uniscan.xyz/address/0xa83E9240221e66f58665fef54F653f0a89E70B75) (Hop 2).
 
 ---
 
