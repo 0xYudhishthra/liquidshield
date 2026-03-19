@@ -51,7 +51,7 @@ export function PositionScanner({ address }: PositionScannerProps) {
           functionName: "getUserAccountData",
           args: [address as `0x${string}`],
         });
-        const [collateral, debt, , , , hf] = data as bigint[];
+        const [collateral, debt, , , , hf] = data as unknown as bigint[];
         setPosition({
           collateralUsd: Number(collateral) / 1e8,
           debtUsd: Number(debt) / 1e8,
