@@ -263,7 +263,7 @@ sequenceDiagram
 
 | Step | Description | Network | Transaction |
 |---|---|---|---|
-| **RSC Deploy** | PositionMonitor deployed with CRON + HealthDanger subscriptions | Reactive Lasna | [`0xaba3f725...`](https://lasna-explorer.rnk.dev/tx/0xaba3f725942bcd2363c15a7912ae7af63fa2ced7c0a7dc3a8374df6e254f6871) |
+| **RSC Deploy** | PositionMonitor deployed with CRON + HealthDanger subscriptions | Reactive Lasna | [`0xaba3f725...`](https://lasna.reactscan.net/tx/0xaba3f725942bcd2363c15a7912ae7af63fa2ced7c0a7dc3a8374df6e254f6871) |
 | **Hop 1** | RSC CRON → HealthChecker reads Aave on-chain → emits HealthDanger for 4 positions | Base Sepolia | [`0xba19cc06...`](https://sepolia.basescan.org/tx/0xba19cc068fb800138841703bc45e2f495121a6499b450bed6566f1c7e3a960f9) |
 | **Hop 2** | RSC detects HealthDanger → callback proxy → DefenseCallback on Unichain | Unichain Sepolia | [`0x8034a122...`](https://sepolia.uniscan.xyz/tx/0x8034a1229092ab7be7623f1552681d42c9d5dd60cf2059fd6640c0e8ea3412bb) |
 | **Defense Triggered** | Hook burns ERC-6909 claims, takes tokens, emits ERC-7683 intent | Unichain Sepolia | [`0x77c446e4...`](https://sepolia.uniscan.xyz/tx/0x77c446e449af2ef669a18c6254e31f8637bce7d7a43e6f1b065d720d5deb7e2a) |
@@ -272,7 +272,7 @@ sequenceDiagram
 | **Order Settlement** | Filler settles ERC-7683 order on Settler (marks order complete) | Unichain Sepolia | [`0xad944a50...`](https://sepolia.uniscan.xyz/tx/0xad944a506a8fae211ecfc4f5dadc393644f1aca6c0f2a30ac48d8e95c8f931cc) |
 | **Defense Settled** | Hook settleDefense() → reserve replenished, 1.5% fee charged, position → ACTIVE | Unichain Sepolia | [`0x55493273...`](https://sepolia.uniscan.xyz/tx/0x55493273aebb6181b1fb0380c702945ef7bdaebf1d61de8cbd754f3c1a419b6c) |
 
-> **RSC on Lasna Explorer:** View the PositionMonitor RSC and its reactive transactions at [`0x92CD07dD...`](https://lasna-explorer.rnk.dev/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) — the explorer shows CRON subscriptions firing and callback emissions to both Base Sepolia (Hop 1) and Unichain Sepolia (Hop 2).
+> **RSC on Lasna Explorer:** View the PositionMonitor RSC and its reactive transactions at [`0x92CD07dD...`](https://lasna.reactscan.net/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) — the explorer shows CRON subscriptions firing and callback emissions to both Base Sepolia (Hop 1) and Unichain Sepolia (Hop 2).
 
 ---
 
