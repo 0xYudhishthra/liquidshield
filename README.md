@@ -146,32 +146,25 @@ The demo uses **Batched Gradual Unwind** via the `AaveV3Adapter` on Base Sepolia
 
 ---
 
-## Partner Integrations
+## Integration Map
 
-> This section maps each partner technology to the exact files where it's integrated.
+> Maps each technology to the exact files where it's used.
 
-### Uniswap v4 Hooks
+### Uniswap v4 + Unichain
 
-Core hook leveraging v4's flash accounting, ERC-6909 claims, and `donate()` for LP distribution.
-
-| File | Description |
-|---|---|
-| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Main hook contract — `getHookPermissions()`, `beforeSwap()`, `afterAddLiquidity()`, `afterRemoveLiquidity()`, defense trigger, ERC-6909 accounting |
-| [`packages/contracts/src/router/LiquidShieldRouter.sol`](./packages/contracts/src/router/LiquidShieldRouter.sol) | User-facing registration and premium payments via the hook |
-| [`packages/contracts/src/interfaces/ILiquidShieldHook.sol`](./packages/contracts/src/interfaces/ILiquidShieldHook.sol) | Hook interface definition |
-| [`packages/contracts/test/LiquidShieldHook.t.sol`](./packages/contracts/test/LiquidShieldHook.t.sol) | 50 Foundry tests: registration, premium collection, defense trigger, ERC-6909 accounting, donate(), dynamic fees |
-| [`packages/contracts/test/integration/FullDefenseFlow.t.sol`](./packages/contracts/test/integration/FullDefenseFlow.t.sol) | End-to-end integration: register → trigger → defend → settle → donate |
-
-### Unichain (Flashblocks + TEE)
-
-LiquidShield leverages Unichain's 200ms Flashblock preconfirmations for sub-second defense reaction time, and TEE-based priority ordering to prevent MEV front-running of defense transactions.
+Core hook deployed on Unichain Sepolia — leverages v4's flash accounting, ERC-6909 claims, `donate()`, and defense-aware dynamic fees. Unichain's 200ms Flashblock preconfirmations enable ~400ms detection-to-defense, while TEE priority ordering prevents MEV front-running. ERC-7683 cross-chain intents coordinate defense execution across chains.
 
 | File | Description |
 |---|---|
-| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Hook deployed on Unichain Sepolia — all defense accounting benefits from ~400ms state propagation via Flashblocks |
-| [`packages/contracts/src/settler/LiquidShieldSettler.sol`](./packages/contracts/src/settler/LiquidShieldSettler.sol) | ERC-7683 settlement on Unichain — intent emission + filler settlement verification |
-| [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Monitors Flashblock-preconfirmed defense events for rapid filler response |
+| [`packages/contracts/src/hooks/LiquidShieldHook.sol`](./packages/contracts/src/hooks/LiquidShieldHook.sol) | Main hook — `getHookPermissions()`, `beforeSwap()` (dynamic fees), `afterAddLiquidity()`, `afterRemoveLiquidity()`, defense trigger with ERC-6909 burn/take, `donate()` for LP rewards |
+| [`packages/contracts/src/router/LiquidShieldRouter.sol`](./packages/contracts/src/router/LiquidShieldRouter.sol) | User-facing registration and premium payments |
+| [`packages/contracts/src/settler/LiquidShieldSettler.sol`](./packages/contracts/src/settler/LiquidShieldSettler.sol) | `IOriginSettler` (ERC-7683) — `open()` emits `GaslessCrossChainOrder`, `settle()` verifies filler execution |
+| [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Monitors Flashblock-preconfirmed `OrderOpened` events, decodes intent data |
+| [`packages/filler/src/executor.ts`](./packages/filler/src/executor.ts) | Filler executor — dispatches to strategy, fills on source chain |
 | [`packages/filler/src/settlement.ts`](./packages/filler/src/settlement.ts) | Settlement back on Unichain after source-chain defense execution |
+| [`packages/contracts/test/LiquidShieldHook.t.sol`](./packages/contracts/test/LiquidShieldHook.t.sol) | 50 tests: registration, premium collection, defense trigger, ERC-6909, donate(), dynamic fees |
+| [`packages/contracts/test/LiquidShieldSettler.t.sol`](./packages/contracts/test/LiquidShieldSettler.t.sol) | 16 tests: order creation, nonce tracking, settlement, authorization |
+| [`packages/contracts/test/integration/FullDefenseFlow.t.sol`](./packages/contracts/test/integration/FullDefenseFlow.t.sol) | End-to-end: register → trigger → defend → settle → donate |
 
 ### Reactive Network
 
@@ -182,7 +175,7 @@ Cross-chain health factor monitoring via Reactive Smart Contracts — two-hop ar
 | [`packages/contracts/src/rsc/PositionMonitor.sol`](./packages/contracts/src/rsc/PositionMonitor.sol) | RSC on Reactive Lasna — CRON-triggered, subscribes to HealthDanger events. Pure event router (no position storage). |
 | [`packages/contracts/src/rsc/HealthChecker.sol`](./packages/contracts/src/rsc/HealthChecker.sol) | On-chain health validator on Base Sepolia — reads `getUserAccountData()` from Aave, emits `HealthDanger` if HF < threshold |
 | [`packages/contracts/src/rsc/DefenseCallback.sol`](./packages/contracts/src/rsc/DefenseCallback.sol) | Callback receiver on Unichain — inherits `AbstractCallback`, first param is `address` (RVM ID overwrite), forwards `triggerDefense()` to hook |
-| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 7 Foundry tests: CRON callback, HealthDanger forwarding, event filtering, access control |
+| [`packages/contracts/test/PositionMonitor.t.sol`](./packages/contracts/test/PositionMonitor.t.sol) | 14 tests: CRON callback, HealthDanger forwarding, event filtering, access control |
 
 ```mermaid
 sequenceDiagram
@@ -206,15 +199,6 @@ sequenceDiagram
     CB->>Hook: triggerDefense(posId, health)
     Hook->>Hook: burn ERC-6909 + take + emit ERC-7683
 ```
-
-### ERC-7683 (Cross-Chain Intents)
-
-| File | Description |
-|---|---|
-| [`packages/contracts/src/settler/LiquidShieldSettler.sol`](./packages/contracts/src/settler/LiquidShieldSettler.sol) | `IOriginSettler` implementation — `open()` emits `GaslessCrossChainOrder`, `settle()` verifies filler execution |
-| [`packages/contracts/test/LiquidShieldSettler.t.sol`](./packages/contracts/test/LiquidShieldSettler.t.sol) | 16 tests: order creation, nonce tracking, settlement, authorization |
-| [`packages/filler/src/watcher.ts`](./packages/filler/src/watcher.ts) | Intent watcher — monitors `OrderOpened` events, decodes intent data |
-| [`packages/filler/src/executor.ts`](./packages/filler/src/executor.ts) | Filler executor — dispatches to strategy, fills on source chain |
 
 ### Defense Executor & Lending Adapters
 
@@ -272,7 +256,7 @@ sequenceDiagram
 | **Order Settlement** | Filler settles ERC-7683 order on Settler (marks order complete) | Unichain Sepolia | [`0xad944a50...`](https://sepolia.uniscan.xyz/tx/0xad944a506a8fae211ecfc4f5dadc393644f1aca6c0f2a30ac48d8e95c8f931cc) |
 | **Defense Settled** | Hook settleDefense() → reserve replenished, 1.5% fee charged, position → ACTIVE | Unichain Sepolia | [`0x55493273...`](https://sepolia.uniscan.xyz/tx/0x55493273aebb6181b1fb0380c702945ef7bdaebf1d61de8cbd754f3c1a419b6c) |
 
-> **RSC on Lasna Explorer:** View the PositionMonitor RSC and its reactive transactions at [`0x92CD07dD...`](https://lasna.reactscan.net/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) — the explorer shows CRON subscriptions firing and callback emissions to both Base Sepolia (Hop 1) and Unichain Sepolia (Hop 2).
+> **RSC proof of liveness:** View the PositionMonitor RSC RVM transactions at [`0x92CD07dD...` on Reactscan](https://lasna.reactscan.net/address/0x92CD07dD3F91F00242Be400a54184830aeDfb464) (select the RVM Transactions tab). Callback arrivals are also independently verifiable on the destination chains: [HealthChecker on Basescan](https://sepolia.basescan.org/address/0x7D3692dd5B58f9B35fF5EcaAEc33b80CBB490038) (Hop 1 callbacks) and [DefenseCallback on Uniscan](https://sepolia.uniscan.xyz/address/0xa83E9240221e66f58665fef54F653f0a89E70B75) (Hop 2 callbacks).
 
 ---
 
@@ -357,6 +341,24 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 FILLER_PRIVATE_KEY=0x...
 ```
 
+### Demo Scripts
+
+Scripts for reproducing the full defense flow end-to-end:
+
+```bash
+# 1. Swap through the hook (demonstrates JIT liquidity from Aqua0)
+PRIVATE_KEY=0x... ./script/demo-swap-jit.sh
+
+# 2. Drop health factor by borrowing more on Aave (Base Sepolia)
+PRIVATE_KEY=0x... ./script/demo-simulate-health-drop.sh
+
+# 3. Watch for defense trigger (polls hook status every 10s)
+./script/demo-watch-defense.sh <positionId> [userAddress]
+
+# 4. Run the filler service to execute defense + settle
+PRIVATE_KEY=0x... ./script/demo-run-filler.sh
+```
+
 ---
 
 ## Testing
@@ -413,28 +415,6 @@ The demo shows:
 4. **Batched unwind**: Filler executes defense on Base Sepolia via AaveV3Adapter
 
 > One mWETH/mUSDC pool on Unichain. Aave V3 on Base Sepolia. Reactive Network monitoring. Every delta resolves to zero.
-
----
-
-## Bounty Alignment
-
-### Uniswap Foundation ($20K pool)
-- Novel hook combining liquidity management + risk management + dynamic fees
-- ERC-6909 defense reserve demonstrates deep v4 flash accounting understanding
-- `poolManager.donate()` for LP reward distribution — v4-native mechanism
-- Dual adapter pattern proves hooks as composable infrastructure
-
-### Unichain ($10K pool)
-- Flashblocks: ~400ms detection-to-defense response time
-- TEE: Priority ordering prevents MEV front-running of defense transactions
-- ERC-7683: Native cross-chain intent settlement via `LiquidShieldSettler`
-- All four Unichain capabilities used together — not forced, essential
-
-### Reactive Network ($5K pool)
-- Cross-chain health factor monitoring = THE canonical RSC use case
-- RSC subscribes to lending protocol events across multiple chains
-- Evaluates conditions → triggers cross-chain callback to hook
-- `PositionMonitor.sol` with 19 dedicated tests
 
 ---
 
