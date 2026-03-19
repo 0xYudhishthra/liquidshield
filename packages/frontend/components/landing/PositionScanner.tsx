@@ -31,7 +31,12 @@ export function PositionScanner({ address }: PositionScannerProps) {
   const [createTxHash, setCreateTxHash] = useState<string | null>(null);
   const [protecting, setProtecting] = useState(false);
   const [protectStep, setProtectStep] = useState("");
-  const [protectTxHash, setProtectTxHash] = useState<string | null>(null);
+  const [protectTxHash, setProtectTxHash] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(`liquidshield:protected:${address}`) || null;
+    }
+    return null;
+  });
 
   const truncated = `${address.slice(0, 6)}...${address.slice(-4)}`;
 
@@ -118,8 +123,10 @@ export function PositionScanner({ address }: PositionScannerProps) {
         body: JSON.stringify({ userAddress: address, signature, message, sourceChainId: 84532, strategy: 1, healthThreshold: "1500000000000000000" }),
       });
       const result = await res.json();
-      if (result.txHash) { setProtectTxHash(result.txHash); }
-      else { console.error("Protection failed:", result.error); }
+      if (result.txHash) {
+        setProtectTxHash(result.txHash);
+        localStorage.setItem(`liquidshield:protected:${address}`, result.txHash);
+      } else { console.error("Protection failed:", result.error); }
     } catch (err) { console.error("Failed to protect:", err); }
     setProtecting(false);
     setProtectStep("");
